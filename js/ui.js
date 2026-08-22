@@ -1280,16 +1280,14 @@ function renderRankings(el, tab) {
   el.appendChild(tabs);
 
   const card = document.createElement("div");
-  card.className = "card";
-  card.style.padding = "10px 16px";
+  card.className = "card rank-card";
   const table = document.createElement("table");
   table.className = "data";
   const isMoney = tab === "money";
   table.innerHTML = `<thead><tr>
-    <th style="width:84px">Rang</th><th>Joueur</th>
+    <th class="col-rank">Rang</th><th>Joueur</th>
     <th class="num">${isMoney ? "Prize money" : "Points"}</th>
-    <th class="num">${isMoney ? "Points" : "Prize money"}</th>
-    <th>Titres</th></tr></thead>`;
+    <th class="num col-sec">${isMoney ? "Points" : "Prize money"}</th></tr></thead>`;
   const tbody = document.createElement("tbody");
 
   const list = isMoney ? sortedByMoney() : sortedByPoints();
@@ -1310,12 +1308,12 @@ function renderRankings(el, tab) {
     const tr = document.createElement("tr");
     if (state.favorites.includes(p.id)) tr.classList.add("fav-row");
     if (!isMoney && (rank === 8 || rank === 64)) tr.classList.add("top-cut");
-    tr.innerHTML = `<td><span class="rk-pos">${rank}</span>${move}</td>
+    tr.innerHTML = `<td class="col-rank"><span class="rk-pos">${rank}</span>${move}</td>
       <td><div class="player-cell"><span class="pc-flag">${flagHTML(p.flag)}</span>
-        <span>${p.name}${state.favorites.includes(p.id) ? " ⭐" : ""}<span class="pc-cat">${p.cat}</span></span></div></td>
+        <span class="pc-body">${p.name}${state.favorites.includes(p.id) ? " ⭐" : ""}<span class="pc-cat">${p.cat}</span>
+        ${titles ? `<span class="title-chips">${titles}</span>` : ""}</span></div></td>
       <td class="num"><strong>${isMoney ? fmtEuro(state.money[p.id]) : fmtPts(state.points[p.id])}</strong></td>
-      <td class="num">${isMoney ? fmtPts(state.points[p.id]) + " pts" : fmtEuro(state.money[p.id])}</td>
-      <td><div class="title-chips">${titles}</div></td>`;
+      <td class="num col-sec">${isMoney ? fmtPts(state.points[p.id]) + " pts" : fmtEuro(state.money[p.id])}</td>`;
     tr.classList.add("row-clickable");
     tr.title = "Voir la carte de " + p.name;
     tr.addEventListener("click", () => openPlayerCard(p.id));
@@ -1565,42 +1563,43 @@ function renderFavorites(el) {
     </div>`);
   el.appendChild(chartCard);
 
-  /* Détail des paris */
+  /* Détail des paris : une carte par pari (lisible aussi sur mobile) */
   const tableCard = document.createElement("div");
   tableCard.className = "card bets-table-card";
   tableCard.innerHTML = `<h3>🎫 Le détail de ton ticket</h3>`;
-  const table = document.createElement("table");
-  table.className = "data";
-  table.innerHTML = `<thead><tr>
-    <th>Joueur</th><th class="num">Cote</th><th class="num">Mise</th>
-    <th class="num">Prize attendu</th><th class="num">Prize réel</th>
-    <th class="num">Valeur du pari</th><th>Dernier résultat</th></tr></thead>`;
-  const tbody = document.createElement("tbody");
+  const list = document.createElement("div");
+  list.className = "bet-cards";
   state.bets.forEach(bet => {
     const p = getPlayer(bet.pid);
     const value = betValue(bet);
     const paceShare = pace[pace.length - 1].value / BET_BUDGET; // part du pool distribuée
     const expectedBet = bet.amount * paceShare;
     const diff = value - (seasonOver ? bet.amount : expectedBet);
-    const last = lastResultLabel(bet.pid);
-    const tr = document.createElement("tr");
-    tr.className = "row-clickable";
-    tr.title = "Voir la carte de " + p.name;
-    tr.innerHTML = `
-      <td><div class="player-cell"><span class="pc-flag">${flagHTML(p.flag)}</span>
-        <span>${p.name}<span class="pc-cat">${p.cat}</span></span></div></td>
-      <td class="num"><span class="odds-badge">×${betOdds(bet.pid).toFixed(2)}</span></td>
-      <td class="num">${fmtEuro(bet.amount)}</td>
-      <td class="num">${fmtEuro(state.refs[bet.pid])}</td>
-      <td class="num">${fmtEuro(state.money[bet.pid] || 0)}</td>
-      <td class="num"><strong>${fmtEuro(Math.round(value))}</strong>
-        <span class="rk-move ${diff >= 0 ? "up" : "down"}">${diff >= 0 ? "▲" : "▼"} ${fmtEuro(Math.abs(Math.round(diff)))}</span></td>
-      <td style="font-size:12px">${last}</td>`;
-    tr.addEventListener("click", () => openPlayerCard(bet.pid));
-    tbody.appendChild(tr);
+    const bc = document.createElement("div");
+    bc.className = "bet-card row-clickable";
+    bc.title = "Voir la carte de " + p.name;
+    bc.innerHTML = `
+      <div class="bc-head">
+        <span class="bc-flag">${flagHTML(p.flag)}</span>
+        <span class="bc-id">
+          <span class="bc-name">${p.name}${p.custom ? " 🎾" : ""}</span>
+          <span class="bc-cat">${p.cat} · <span class="odds-badge">×${betOdds(bet.pid).toFixed(2)}</span></span>
+        </span>
+        <span class="bc-value">
+          <span class="v">${fmtEuro(Math.round(value))}</span>
+          <span class="rk-move ${diff >= 0 ? "up" : "down"}">${diff >= 0 ? "▲" : "▼"} ${fmtEuro(Math.abs(Math.round(diff)))}</span>
+        </span>
+      </div>
+      <div class="bc-grid">
+        <div class="bc-stat"><span class="l">Mise</span><span class="v">${fmtEuro(bet.amount)}</span></div>
+        <div class="bc-stat"><span class="l">Prize attendu</span><span class="v">${fmtEuro(state.refs[bet.pid])}</span></div>
+        <div class="bc-stat"><span class="l">Prize réel</span><span class="v">${fmtEuro(state.money[bet.pid] || 0)}</span></div>
+        <div class="bc-stat bc-last"><span class="l">Dernier résultat</span><span class="v">${lastResultLabel(bet.pid)}</span></div>
+      </div>`;
+    bc.addEventListener("click", () => openPlayerCard(bet.pid));
+    list.appendChild(bc);
   });
-  table.appendChild(tbody);
-  tableCard.appendChild(table);
+  tableCard.appendChild(list);
   el.appendChild(tableCard);
 }
 

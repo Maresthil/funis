@@ -708,7 +708,107 @@ tr.top-cut td { border-bottom: 2.5px dashed var(--gold); }
 .confetti { position: fixed; top: -12px; font-size: 16px; z-index: 300; animation: fall linear forwards; pointer-events: none; }
 @keyframes fall { to { transform: translateY(105vh) rotate(720deg); opacity: .6; } }
 
-/* ---------- Divers ---------- */
+/* ---------- Classements : mise en page ---------- */
+.rank-card { padding: 10px 16px; overflow-x: hidden; }
+.col-rank { width: 84px; white-space: nowrap; }
+.player-cell .pc-body { min-width: 0; }
+.player-cell .title-chips { margin-top: 3px; }
+
+/* ---------- Ticket de paris en cartes ---------- */
+.bet-cards { display: flex; flex-direction: column; gap: 10px; }
+.bet-card {
+  border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  transition: all .13s; background: #fff;
+}
+.bet-card:hover { border-color: var(--blue); box-shadow: 0 5px 16px rgba(36,120,255,.16); transform: translateY(-1px); }
+.bc-head { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; }
+.bc-flag { font-size: 22px; }
+.bc-id { flex: 1; min-width: 0; }
+.bc-name { display: block; font-family: var(--font-head); font-weight: 800; font-size: 18px; color: var(--navy-800); line-height: 1.1; }
+.bc-cat { font-size: 11.5px; color: var(--text-dim); }
+.bc-value { text-align: right; white-space: nowrap; }
+.bc-value .v { display: block; font-family: var(--font-head); font-weight: 800; font-size: 20px; color: var(--navy-800); font-variant-numeric: tabular-nums; }
+.bc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.bc-stat { background: #f6f9fe; border-radius: 9px; padding: 7px 9px; min-width: 0; }
+.bc-stat .l { display: block; font-size: 9.5px; text-transform: uppercase; letter-spacing: .6px; color: var(--text-dim); }
+.bc-stat .v { font-size: 13px; font-weight: 700; color: var(--navy-800); font-variant-numeric: tabular-nums; }
+.bc-last .v { font-weight: 600; font-size: 12px; }
+@media (max-width: 720px) { .bc-grid { grid-template-columns: 1fr 1fr; } }
+
+/* ============================================================
+   MOBILE (smartphones)
+   ============================================================ */
+@media (max-width: 640px) {
+  #view { padding: 14px 10px 44px; }
+  .topbar-inner { padding: 8px 10px; gap: 8px; }
+  .logo-text { font-size: 24px; }
+  .logo-ball { font-size: 18px; }
+  .logo-sub { display: none; }
+  #mainnav { gap: 2px; }
+  .nav-btn { font-size: 13.5px; padding: 6px 8px; letter-spacing: .4px; }
+  #bank-chip { font-size: 13px; padding: 4px 10px; }
+  #footer { flex-direction: column; align-items: flex-start; }
+
+  .page-title { font-size: 25px; }
+  .btn { font-size: 13.5px; padding: 9px 14px; letter-spacing: .6px; }
+  .btn.btn-sm { font-size: 12px; padding: 6px 10px; }
+
+  .tourney-header { padding: 15px 14px; }
+  .tourney-header h1 { font-size: 24px; }
+  .bracket-nav .sec-btn { padding: 6px 10px; font-size: 12px; }
+  .b-round { min-width: 200px; }
+
+  /* Tables compactes, sans débordement */
+  table.data { font-size: 12px; }
+  table.data th, table.data td { padding: 7px 5px; }
+  .col-sec { display: none; }           /* colonne secondaire des classements */
+  .col-rank { width: 56px; }
+  .rk-move { display: block; margin-left: 0; }
+  .rank-tab { font-size: 14px; padding: 8px 13px; }
+  .rank-card { padding: 6px 8px; }
+  .title-chip { font-size: 9px; padding: 1px 5px; }
+
+  .recap-hero { padding: 26px 14px; }
+  .recap-hero .r-champ { font-size: 32px; }
+  .recap-block { padding: 12px 10px; overflow-x: auto; }
+
+  .bank-hero { padding: 18px 16px; gap: 14px; }
+  .bank-hero .bh-main .v { font-size: 34px; }
+  .bank-hero .bh-delta { font-size: 18px; }
+  .bank-chart-card, .bets-table-card { padding: 12px 10px; }
+
+  .history-item .h-name { min-width: 0; font-size: 18px; }
+  .pcard { padding: 16px 14px; }
+  .pcard-name { font-size: 24px; }
+  .pcard-flag { font-size: 40px; }
+  .pcard-stats { grid-template-columns: 1fr 1fr; }
+  .pcard-skills { grid-template-columns: 1fr; gap: 8px; }
+
+  .onboard-hero .big-logo { font-size: 56px; }
+  .onboard-card { padding: 16px 12px; }
+}
+
+/* Fenêtre de match : sur petit écran, la ligne des sets passe SOUS le nom
+   (sinon un match en 5 sets déborde à droite) */
+@media (max-width: 600px) {
+  #modal-overlay { padding: 8px; }
+  .m-head { padding: 12px 14px; }
+  .m-head .m-round { font-size: 16px; }
+  .scoreboard { padding: 12px 12px 2px; }
+  .sb-row { grid-template-columns: 24px minmax(0, 1fr); row-gap: 4px; padding: 8px 8px; }
+  .sb-row > span { min-width: 0; }
+  .sb-row .sb-flag { font-size: 18px; }
+  .sb-row .sb-name { font-size: 14.5px; flex-wrap: wrap; }
+  .sb-sets { grid-column: 1 / -1; justify-content: flex-start; padding-left: 32px; }
+  .sb-set { min-width: 27px; height: 30px; font-size: 14px; }
+  .m-winner-banner { margin: 8px 12px; font-size: 13.5px; }
+  .m-controls { padding: 6px 12px 2px; }
+  #m-next { padding: 0 12px 4px; }
+  #m-next .btn { width: 100%; }
+  .m-commentary { margin: 10px 12px 14px; max-height: 170px; font-size: 12px; }
+  .speed-group { margin-left: 0; }
+  .speed-btn { padding: 6px 9px; font-size: 11px; }
+}
 .empty-note { text-align: center; color: var(--text-dim); padding: 50px 20px; }
 .inline-flag { font-size: 16px; }
 .mono { font-variant-numeric: tabular-nums; }
