@@ -76,6 +76,7 @@ function navigate(view, params = {}) {
   else if (view === "history") renderHistory(el);
   else if (view === "favorites") renderFavorites(el);
   else if (view === "players") renderPlayers(el);
+  else if (view === "stats") renderStats(el);
   window.scrollTo({ top: 0 });
 }
 
@@ -198,7 +199,7 @@ const CLASSEMENTS_FR = ["40", "30/5", "30/4", "30/3", "30/2", "30/1", "30",
 
 function renderPlayerStep(container) {
   const sk = {};
-  SKILL_KEYS.forEach(k => { sk[k] = 7; }); // 70 points, à redistribuer librement
+  SKILL_KEYS.forEach(k => { sk[k] = 8; }); // départ à 80, 5 points bonus à placer (total 85)
 
   const countryOptions = Object.entries(COUNTRY_NAMES)
     .sort((a, b) => a[1].localeCompare(b[1], "fr"))
@@ -208,8 +209,9 @@ function renderPlayerStep(container) {
   container.innerHTML = `
     <h2>2 · Crée ton champion — le 128<sup>e</sup> joueur</h2>
     <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
-      C'est toi qui entres sur le circuit ! Répartis tes 70 points de compétences comme tu veux
-      (chacune de 1 à 10). Un pari de ${fmtEuro(CUSTOM_BET)} sera automatiquement placé sur toi. 🎾</p>
+      C'est toi qui entres sur le circuit avec un avantage : <strong>${CUSTOM_SKILL_TOTAL} points</strong>
+      de compétences (contre 70 pour le plateau), chacune de 1 à 10.
+      Un pari de ${fmtEuro(CUSTOM_BET)} sera automatiquement placé sur toi — le bookmaker ajustera ta cote. 🎾</p>
     <div class="create-layout">
       <div>
         <label class="cp-label">Prénom</label>
@@ -226,7 +228,7 @@ function renderPlayerStep(container) {
         </select>
       </div>
       <div class="bet-slip">
-        <h3>⚙️ Tes 70 points de compétences</h3>
+        <h3>⚙️ Tes ${CUSTOM_SKILL_TOTAL} points de compétences</h3>
         <div class="cp-remaining" id="cp-remaining"></div>
         <div id="cp-skills"></div>
       </div>
@@ -246,26 +248,26 @@ function renderPlayerStep(container) {
         <span class="cp-skill-label">${s.label}</span>
         <button class="cp-step" data-k="${s.key}" data-d="-1" ${sk[s.key] <= 1 ? "disabled" : ""}>−</button>
         <span class="cp-skill-val">${sk[s.key]}</span>
-        <button class="cp-step" data-k="${s.key}" data-d="1" ${sk[s.key] >= 10 || total() >= 70 ? "disabled" : ""}>+</button>
+        <button class="cp-step" data-k="${s.key}" data-d="1" ${sk[s.key] >= 10 || total() >= CUSTOM_SKILL_TOTAL ? "disabled" : ""}>+</button>
         <span class="cp-skill-bar"><span style="width:${sk[s.key] * 10}%"></span></span>`;
       skillsDiv.appendChild(row);
     });
     skillsDiv.querySelectorAll(".cp-step").forEach(b => b.addEventListener("click", () => {
       const k = b.dataset.k, d = parseInt(b.dataset.d, 10);
       const t = total();
-      if (d > 0 && (sk[k] >= 10 || t >= 70)) return;
+      if (d > 0 && (sk[k] >= 10 || t >= CUSTOM_SKILL_TOTAL)) return;
       if (d < 0 && sk[k] <= 1) return;
       sk[k] += d;
       draw(); update();
     }));
-    const rem = 70 - total();
+    const rem = CUSTOM_SKILL_TOTAL - total();
     $("#cp-remaining").innerHTML = rem === 0
-      ? `<span style="color:#7dedaa">✓ 70 / 70 points répartis</span>`
+      ? `<span style="color:#7dedaa">✓ ${CUSTOM_SKILL_TOTAL} / ${CUSTOM_SKILL_TOTAL} points répartis</span>`
       : `<span style="color:#ffd977">${rem} point${rem > 1 ? "s" : ""} restant${rem > 1 ? "s" : ""} à placer</span>`;
   }
   function update() {
     const name = ($("#cp-prenom").value.trim() + " " + $("#cp-nom").value.trim()).trim();
-    $("#cp-go").disabled = !(name.length >= 3 && total() === 70);
+    $("#cp-go").disabled = !(name.length >= 3 && total() === CUSTOM_SKILL_TOTAL);
   }
   ["cp-prenom", "cp-nom"].forEach(id => $("#" + id).addEventListener("input", update));
   $("#cp-go").addEventListener("click", () => {
@@ -761,22 +763,34 @@ function findNextBetMatch(rec) {
     }
     return null;
   }
+  // Au Masters, TOUS les matchs se jouent à la main, dans l'ordre des journées
   if (rec.phase === "rr") {
-    for (const g of ["A", "B"])
-      for (let i = 0; i < rec.rr[g].length; i++) {
-        const m = rec.rr[g][i];
-        if (m.winner === null && isBetMatch(m)) return { kind: "rr", group: g, matchIdx: i };
+    for (let d = 1; d <= 3; d++) {
+      if (!finalsDayPlayable(rec, d)) break;
+      for (const g of ["A", "B"]) {
+        const idx = rec.rr[g].findIndex(m => m.winner === null && (m.day || 1) === d);
+        if (idx !== -1) return { kind: "rr", group: g, matchIdx: idx };
       }
+    }
   } else if (rec.phase === "sf") {
     for (let i = 0; i < rec.sf.length; i++) {
       const m = rec.sf[i];
-      if (m.winner === null && m.p1 !== null && isBetMatch(m)) return { kind: "sf", matchIdx: i };
+      if (m.winner === null && m.p1 !== null) return { kind: "sf", matchIdx: i };
     }
   } else if (rec.phase === "final") {
     const m = rec.final;
-    if (m.winner === null && m.p1 !== null && isBetMatch(m)) return { kind: "final" };
+    if (m.winner === null && m.p1 !== null) return { kind: "final" };
   }
   return null;
+}
+
+/* Une journée du Masters n'est jouable que si les journées précédentes
+   (dans les deux groupes) sont terminées */
+function finalsDayPlayable(rec, day) {
+  if (day <= 1) return true;
+  return rec.rr.A.concat(rec.rr.B)
+    .filter(m => (m.day || 1) < day)
+    .every(m => m.winner !== null);
 }
 
 /* Avance la simulation (matchs non pariés) jusqu'au prochain match parié,
@@ -830,12 +844,20 @@ function renderFinalsBody(el, rec, readOnly) {
     table.appendChild(tbody);
     block.appendChild(table);
 
+    // Matchs de poule présentés par journée (J1, J2, J3)
     const rrDiv = document.createElement("div");
     rrDiv.className = "rr-matches";
-    rec.rr[g].forEach((m, i) => {
-      const card = finalsMatchCard(rec, m, () => openMatchModal(rec, { kind: "rr", group: g, matchIdx: i }),
-        !readOnly && rec.phase === "rr" && m.winner === null);
-      rrDiv.appendChild(card);
+    [1, 2, 3].forEach(day => {
+      const dayHead = document.createElement("div");
+      dayHead.className = "rr-day" + (finalsDayPlayable(rec, day) ? "" : " rr-day-locked");
+      dayHead.innerHTML = `Journée ${day}${finalsDayPlayable(rec, day) ? "" : " 🔒"}`;
+      rrDiv.appendChild(dayHead);
+      rec.rr[g].forEach((m, i) => {
+        if ((m.day || 1) !== day) return;
+        const card = finalsMatchCard(rec, m, () => openMatchModal(rec, { kind: "rr", group: g, matchIdx: i }),
+          !readOnly && rec.phase === "rr" && m.winner === null && finalsDayPlayable(rec, day));
+        rrDiv.appendChild(card);
+      });
     });
     block.appendChild(rrDiv);
     groupsDiv.appendChild(block);
@@ -901,7 +923,7 @@ function openMatchModal(rec, ctx) {
   } else if (ctx.kind === "rr") {
     m = rec.rr[ctx.group][ctx.matchIdx];
     res = playFinalsMatch(rec, "rr", ctx.group, ctx.matchIdx);
-    roundLabel = "Round Robin — Groupe " + (ctx.group === "A" ? "Björn Borg" : "Jimmy Connors");
+    roundLabel = "Journée " + (m.day || 1) + " — Groupe " + (ctx.group === "A" ? "Björn Borg" : "Jimmy Connors");
   } else if (ctx.kind === "sf") {
     m = rec.sf[ctx.matchIdx];
     res = playFinalsMatch(rec, "sf", null, ctx.matchIdx);
@@ -1052,7 +1074,8 @@ function openMatchModal(rec, ctx) {
       } else {
         const nm = findNextBetMatch(rec);
         if (nm) {
-          nextWrap.appendChild(mkBtn("💶 Match suivant de mes paris", "btn", () => {
+          const label = rec.type === "finals" ? "🎾 Match suivant" : "💶 Match suivant de mes paris";
+          nextWrap.appendChild(mkBtn(label, "btn", () => {
             stopTimer(); openMatchModal(rec, nm);
           }));
         } else {
@@ -1358,6 +1381,143 @@ function renderHistory(el) {
     list.appendChild(item);
   });
   el.appendChild(list);
+}
+
+/* ============================================================
+   STATISTIQUES DE LA SAISON
+   ============================================================ */
+function renderStats(el) {
+  el.insertAdjacentHTML("beforeend", `
+    <div class="page-title">Statistiques de la saison</div>
+    <div class="page-sub">Les leaders du circuit dans chaque domaine, les rois de chaque surface,
+      et l'anatomie des matchs de la saison.</div>`);
+
+  const done = CALENDAR.some(t => state.tournaments[t.id] && state.tournaments[t.id].status === "done");
+  if (!done) {
+    el.insertAdjacentHTML("beforeend", `<div class="card empty-note">
+      Les statistiques apparaîtront après le premier tournoi.<br>Lance l'Open d'Australie ! 🎾</div>`);
+    return;
+  }
+
+  // Stats de tous les joueurs (une seule passe)
+  const all = state.players.map(p => ({ p, st: playerStats(p.id) }));
+  const MIN_MATCHES = 5;
+  const qualified = all.filter(x => x.st.wins + x.st.losses >= MIN_MATCHES);
+  const pool = qualified.length >= 10 ? qualified : all.filter(x => x.st.wins + x.st.losses > 0);
+
+  function leaderboard(title, emoji, getNum, getDen, getDetail) {
+    const rows = pool
+      .map(x => {
+        const num = getNum(x.st), den = getDen(x.st);
+        return { x, num, den, ratio: den > 0 ? num / den : -1 };
+      })
+      .filter(r => r.den > 0)
+      .sort((a, b) => (b.ratio - a.ratio) || (b.den - a.den))
+      .slice(0, 10);
+    const card = document.createElement("div");
+    card.className = "card stat-board";
+    card.innerHTML = `<h3>${emoji} ${title}</h3>`;
+    rows.forEach((r, i) => {
+      const line = document.createElement("div");
+      line.className = "sb-line row-clickable" + (state.favorites.includes(r.x.p.id) ? " sb-fav" : "");
+      line.innerHTML = `
+        <span class="sb-rank">${i + 1}</span>
+        <span class="sb-p">${flagHTML(r.x.p.flag)} ${r.x.p.name}</span>
+        <span class="sb-detail">${getDetail(r)}</span>
+        <span class="sb-pct">${pct(r.num, r.den)}</span>`;
+      line.addEventListener("click", () => openPlayerCard(r.x.p.id));
+      card.appendChild(line);
+    });
+    return card;
+  }
+
+  const boardsGrid = document.createElement("div");
+  boardsGrid.className = "stats-grid";
+  boardsGrid.appendChild(leaderboard("% de victoires", "🏆",
+    st => st.wins, st => st.wins + st.losses, r => r.num + "-" + (r.den - r.num)));
+  boardsGrid.appendChild(leaderboard("% de sets gagnés", "🎾",
+    st => st.setsW, st => st.setsW + st.setsL, r => r.num + "-" + (r.den - r.num)));
+  boardsGrid.appendChild(leaderboard("% de jeux gagnés", "🔢",
+    st => st.gamesW, st => st.gamesW + st.gamesL, r => r.num + "-" + (r.den - r.num)));
+  boardsGrid.appendChild(leaderboard("% de balles de break converties", "💥",
+    st => st.bpConv, st => st.bpEarned, r => r.num + " / " + r.den));
+  boardsGrid.appendChild(leaderboard("% de balles de break sauvées", "🛡️",
+    st => st.bpSaved, st => st.bpFaced, r => r.num + " / " + r.den));
+  boardsGrid.appendChild(leaderboard("% de tie-breaks gagnés", "🔥",
+    st => st.tbW, st => st.tbW + st.tbL, r => r.num + "-" + (r.den - r.num)));
+  el.appendChild(boardsGrid);
+  el.insertAdjacentHTML("beforeend", `<div class="page-sub" style="margin-top:6px;font-size:12px">
+    Minimum ${MIN_MATCHES} matchs joués pour figurer dans les classements (dès que 10 joueurs sont qualifiés).</div>`);
+
+  /* Les rois de chaque surface */
+  el.insertAdjacentHTML("beforeend", `<div class="page-title" style="font-size:24px;margin-top:18px">Les rois de chaque surface</div>`);
+  const surfGrid = document.createElement("div");
+  surfGrid.className = "stats-grid stats-grid-4";
+  SKILLS.slice(0, 4).forEach(s => {
+    const rows = all
+      .map(x => { const [w, l] = x.st.surf[s.key]; return { x, w, l, tot: w + l }; })
+      .filter(r => r.tot >= 3)
+      .sort((a, b) => (b.w / b.tot - a.w / a.tot) || (b.w - a.w))
+      .slice(0, 5);
+    const card = document.createElement("div");
+    card.className = "card stat-board surf-board";
+    card.innerHTML = `<h3><span class="surf-note surf-${s.key}">${s.short}</span> ${s.label}</h3>`;
+    if (rows.length === 0) card.insertAdjacentHTML("beforeend", `<div class="bet-empty" style="color:var(--text-dim)">Pas encore assez de matchs.</div>`);
+    rows.forEach((r, i) => {
+      const line = document.createElement("div");
+      line.className = "sb-line row-clickable";
+      line.innerHTML = `
+        <span class="sb-rank">${i + 1}</span>
+        <span class="sb-p">${flagHTML(r.x.p.flag)} ${r.x.p.name}</span>
+        <span class="sb-detail">${r.w}-${r.l}</span>
+        <span class="sb-pct">${pct(r.w, r.tot)}</span>`;
+      line.addEventListener("click", () => openPlayerCard(r.x.p.id));
+      card.appendChild(line);
+    });
+    surfGrid.appendChild(card);
+  });
+  el.appendChild(surfGrid);
+
+  /* Anatomie des matchs */
+  const ms = seasonMatchStats();
+  el.insertAdjacentHTML("beforeend", `<div class="page-title" style="font-size:24px;margin-top:18px">Anatomie des matchs</div>`);
+  const anatGrid = document.createElement("div");
+  anatGrid.className = "stats-grid stats-grid-3";
+
+  function distBoard(title, emoji, entries, total) {
+    const card = document.createElement("div");
+    card.className = "card stat-board";
+    card.innerHTML = `<h3>${emoji} ${title}</h3>`;
+    const max = Math.max(1, ...entries.map(e => e.count));
+    entries.forEach(e => {
+      card.insertAdjacentHTML("beforeend", `
+        <div class="dist-line">
+          <span class="dist-label">${e.label}</span>
+          <span class="dist-bar"><span style="width:${(100 * e.count / max).toFixed(1)}%"></span></span>
+          <span class="dist-val">${fmtPts(e.count)}</span>
+          <span class="sb-pct">${pct(e.count, total)}</span>
+        </div>`);
+    });
+    return card;
+  }
+
+  const bo3Total = (ms.lenBo3[2] || 0) + (ms.lenBo3[3] || 0);
+  anatGrid.appendChild(distBoard("Masters 1000 & Masters (2 sets gagnants)", "⚡", [
+    { label: "En 2 sets", count: ms.lenBo3[2] || 0 },
+    { label: "En 3 sets", count: ms.lenBo3[3] || 0 },
+  ], bo3Total));
+  const bo5Total = (ms.lenBo5[3] || 0) + (ms.lenBo5[4] || 0) + (ms.lenBo5[5] || 0);
+  anatGrid.appendChild(distBoard("Grands Chelems (3 sets gagnants)", "🏆", [
+    { label: "En 3 sets", count: ms.lenBo5[3] || 0 },
+    { label: "En 4 sets", count: ms.lenBo5[4] || 0 },
+    { label: "En 5 sets", count: ms.lenBo5[5] || 0 },
+  ], bo5Total));
+  anatGrid.appendChild(distBoard("Scores de sets", "📋",
+    Object.entries(ms.setScores).map(([k, v]) => ({ label: k.replace("-", " / "), count: v })),
+    ms.totalSets));
+  el.appendChild(anatGrid);
+  el.insertAdjacentHTML("beforeend", `<div class="page-sub" style="margin-top:6px;font-size:12px">
+    ${fmtPts(ms.totalMatches)} matchs et ${fmtPts(ms.totalSets)} sets joués cette saison.</div>`);
 }
 
 /* ============================================================

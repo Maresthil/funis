@@ -6,11 +6,12 @@
 
 "use strict";
 
-const STORAGE_KEY = "funis_save_v4";
+const STORAGE_KEY = "funis_save_v5";
 const BET_BUDGET = 10000;   // budget de paris en début de saison
 const BET_PLAYERS = 5;      // nombre de joueurs à parier (dont ton champion)
 const CUSTOM_BET = 2000;    // pari automatique et fixe sur ton champion
 const ROSTER_SIZE = 127;    // 127 joueurs de plateau + ton champion = 128
+const CUSTOM_SKILL_TOTAL = 85; // ton champion a 85 points (contre 70 pour le plateau)
 const ODDS_SIMS = 120;      // saisons Monte-Carlo pour calibrer les cotes
 
 /* ---------- Compétences ---------- */
@@ -537,12 +538,17 @@ function startFinals(index) {
   const seedsMap = {};
   eight.forEach((id, i) => { seedsMap[id] = i + 1; });
 
+  /* Round robin sur 3 journées : J1 (1-2, 3-4), J2 (1-3, 2-4), J3 (1-4, 2-3) */
   function rrMatches(group) {
-    const ms = [];
-    for (let i = 0; i < group.length; i++)
-      for (let j = i + 1; j < group.length; j++)
-        ms.push({ p1: group[i], p2: group[j], winner: null, score: null });
-    return shuffle(ms);
+    const [a, b, c, d] = group;
+    return [
+      { p1: a, p2: b, winner: null, score: null, day: 1 },
+      { p1: c, p2: d, winner: null, score: null, day: 1 },
+      { p1: a, p2: c, winner: null, score: null, day: 2 },
+      { p1: b, p2: d, winner: null, score: null, day: 2 },
+      { p1: a, p2: d, winner: null, score: null, day: 3 },
+      { p1: b, p2: c, winner: null, score: null, day: 3 },
+    ];
   }
 
   const record = {
@@ -710,6 +716,33 @@ function playerStats(pid) {
   st.bpEarned = st.bpConv + st.bpOppSaved;
   st.bpFaced = st.bpSaved + st.bpOppConv;
   return st;
+}
+
+/* ---------- Statistiques globales de la saison (page Stats) ---------- */
+function seasonMatchStats() {
+  const setScores = { "6-0": 0, "6-1": 0, "6-2": 0, "6-3": 0, "6-4": 0, "7-5": 0, "7-6": 0 };
+  const lenBo3 = { 2: 0, 3: 0 };          // Masters 1000 + Masters
+  const lenBo5 = { 3: 0, 4: 0, 5: 0 };    // Grands Chelems
+  let totalMatches = 0, totalSets = 0;
+  CALENDAR.forEach(t => {
+    const rec = state.tournaments[t.id];
+    if (!rec || rec.status !== "done") return;
+    const matches = rec.type === "bracket"
+      ? rec.rounds.flat()
+      : rec.rr.A.concat(rec.rr.B, rec.sf, [rec.final]);
+    matches.forEach(m => {
+      if (!m || m.winner === null || !m.score) return;
+      totalMatches++;
+      if (t.bestOf === 5) lenBo5[m.score.length] = (lenBo5[m.score.length] || 0) + 1;
+      else lenBo3[m.score.length] = (lenBo3[m.score.length] || 0) + 1;
+      m.score.forEach(s => {
+        const key = Math.max(s[0], s[1]) + "-" + Math.min(s[0], s[1]);
+        if (key in setScores) setScores[key]++;
+        totalSets++;
+      });
+    });
+  });
+  return { setScores, lenBo3, lenBo5, totalMatches, totalSets };
 }
 
 /* ---------- Ton champion (128e joueur, créé par le joueur) ---------- */
