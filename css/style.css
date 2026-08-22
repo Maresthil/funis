@@ -256,6 +256,26 @@ button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .fav-actions { margin-top: 18px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
 /* ---------- Vue Saison (calendrier) ---------- */
+.season-head {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 16px; flex-wrap: wrap; margin-bottom: 20px;
+}
+.btn-newseason {
+  position: relative; overflow: hidden;
+  font-size: 16.5px; padding: 12px 24px; border-radius: 13px;
+  white-space: nowrap;
+}
+.btn-newseason::after {
+  content: ""; position: absolute; top: -60%; bottom: -60%; width: 34px;
+  left: -60px; transform: rotate(22deg);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.75), transparent);
+  transition: left .5s ease;
+}
+.btn-newseason:hover::after { left: calc(100% + 60px); }
+@media (max-width: 640px) {
+  .season-head { align-items: flex-start; }
+  .btn-newseason { width: 100%; font-size: 14.5px; }
+}
 .season-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
 .tourney-card { padding: 18px; position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 8px; }
 .tourney-card .t-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
@@ -772,6 +792,25 @@ tr.top-cut td { border-bottom: 2.5px dashed var(--gold); }
 .dist-bar { height: 10px; background: #eef2f8; border-radius: 6px; overflow: hidden; }
 .dist-bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--blue), var(--blue-bright)); border-radius: 6px; }
 .dist-val { text-align: right; color: var(--text-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
+.extreme-title {
+  font-family: var(--font-head); font-size: 13px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 1.3px; color: var(--text-dim);
+  margin: 10px 0 4px; padding-bottom: 2px; border-bottom: 1px dashed var(--line);
+}
+.extreme-line {
+  display: flex; align-items: center; gap: 10px; padding: 5px 0;
+  border-bottom: 1px dashed #edf1f7;
+}
+.extreme-line:last-child { border-bottom: none; }
+.extreme-line:hover { background: #f6f9fe; }
+.ex-games {
+  font-family: var(--font-head); font-weight: 800; font-size: 20px; color: var(--blue);
+  min-width: 44px; text-align: center; line-height: 1; font-variant-numeric: tabular-nums;
+}
+.ex-games small { display: block; font-size: 8.5px; letter-spacing: 1px; text-transform: uppercase; color: var(--text-dim); font-weight: 600; }
+.ex-body { min-width: 0; }
+.ex-players { display: block; font-size: 13px; color: var(--navy-800); }
+.ex-detail { display: block; font-size: 11.5px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 
 /* ============================================================
    MOBILE (smartphones)

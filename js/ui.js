@@ -45,12 +45,6 @@ document.addEventListener("DOMContentLoaded", () => {
     b.addEventListener("click", () => navigate(b.dataset.nav));
   });
   $("#bank-chip").addEventListener("click", () => navigate("favorites"));
-  $("#btn-reset").addEventListener("click", () => {
-    if (confirm("Recommencer une nouvelle saison ? La saison en cours sera effacée.")) {
-      resetSeason();
-      location.reload();
-    }
-  });
 });
 
 function showMain() {
@@ -438,11 +432,22 @@ function drawBetsUI(container) {
 /* ============================================================
    VUE SAISON — calendrier
    ============================================================ */
+function newSeasonConfirm() {
+  if (confirm("Recommencer une nouvelle saison ? La saison en cours sera effacée.")) {
+    resetSeason();
+    location.reload();
+  }
+}
+
 function renderSeason(el) {
   const head = document.createElement("div");
+  head.className = "season-head";
   head.innerHTML = `
-    <div class="page-title">Calendrier de la saison 2026</div>
-    <div class="page-sub">4 Grands Chelems · 9 Masters 1000 · Masters final — de Melbourne à Turin.</div>`;
+    <div>
+      <div class="page-title">Calendrier de la saison 2026</div>
+      <div class="page-sub" style="margin-bottom:0">4 Grands Chelems · 9 Masters 1000 · Masters final — de Melbourne à Turin.</div>
+    </div>`;
+  head.appendChild(mkBtn("🔄 Nouvelle saison", "btn btn-gold btn-newseason", newSeasonConfirm));
   el.appendChild(head);
 
   const grid = document.createElement("div");
@@ -1516,6 +1521,49 @@ function renderStats(el) {
     Object.entries(ms.setScores).map(([k, v]) => ({ label: k.replace("-", " / "), count: v })),
     ms.totalSets));
   el.appendChild(anatGrid);
+
+  /* Marathons & expéditions : les 3 matchs les plus longs / les plus courts (en jeux) */
+  function extremesBoard(title, emoji, list) {
+    const card = document.createElement("div");
+    card.className = "card stat-board";
+    card.innerHTML = `<h3>${emoji} ${title}</h3>`;
+    if (list.length === 0) {
+      card.insertAdjacentHTML("beforeend", `<div class="bet-empty" style="color:var(--text-dim)">Pas encore de match joué.</div>`);
+      return card;
+    }
+    const sorted = list.slice().sort((a, b) => b.games - a.games);
+    const sections = [
+      { label: "🐢 Les plus longs", rows: sorted.slice(0, 3) },
+      { label: "⚡ Les plus courts", rows: sorted.slice(-3).reverse() },
+    ];
+    sections.forEach(sec => {
+      card.insertAdjacentHTML("beforeend", `<div class="extreme-title">${sec.label}</div>`);
+      sec.rows.forEach(r => {
+        const t = CALENDAR.find(c => c.id === r.tid);
+        const w = getPlayer(r.m.winner);
+        const l = getPlayer(r.m.winner === r.m.p1 ? r.m.p2 : r.m.p1);
+        const line = document.createElement("div");
+        line.className = "extreme-line row-clickable";
+        line.title = "Voir la carte de " + w.name;
+        line.innerHTML = `
+          <span class="ex-games">${r.games}<small>jeux</small></span>
+          <span class="ex-body">
+            <span class="ex-players">${flagHTML(w.flag)} <strong>${w.name}</strong> bat ${flagHTML(l.flag)} ${l.name}</span>
+            <span class="ex-detail">${formatScore(r.m, true)} · ${flagHTML(t.country)} ${t.city}</span>
+          </span>`;
+        line.addEventListener("click", () => openPlayerCard(r.m.winner));
+        card.appendChild(line);
+      });
+    });
+    return card;
+  }
+  el.insertAdjacentHTML("beforeend", `<div class="page-title" style="font-size:24px;margin-top:18px">Marathons &amp; expéditions</div>`);
+  const exGrid = document.createElement("div");
+  exGrid.className = "stats-grid";
+  exGrid.appendChild(extremesBoard("Grands Chelems", "🏆", ms.matchListBo5));
+  exGrid.appendChild(extremesBoard("Masters 1000 & Masters", "⚡", ms.matchListBo3));
+  el.appendChild(exGrid);
+
   el.insertAdjacentHTML("beforeend", `<div class="page-sub" style="margin-top:6px;font-size:12px">
     ${fmtPts(ms.totalMatches)} matchs et ${fmtPts(ms.totalSets)} sets joués cette saison.</div>`);
 }

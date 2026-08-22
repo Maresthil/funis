@@ -723,6 +723,7 @@ function seasonMatchStats() {
   const setScores = { "6-0": 0, "6-1": 0, "6-2": 0, "6-3": 0, "6-4": 0, "7-5": 0, "7-6": 0 };
   const lenBo3 = { 2: 0, 3: 0 };          // Masters 1000 + Masters
   const lenBo5 = { 3: 0, 4: 0, 5: 0 };    // Grands Chelems
+  const matchListBo3 = [], matchListBo5 = []; // pour les records (matchs les plus longs/courts)
   let totalMatches = 0, totalSets = 0;
   CALENDAR.forEach(t => {
     const rec = state.tournaments[t.id];
@@ -733,6 +734,8 @@ function seasonMatchStats() {
     matches.forEach(m => {
       if (!m || m.winner === null || !m.score) return;
       totalMatches++;
+      const games = m.score.reduce((s, x) => s + x[0] + x[1], 0);
+      (t.bestOf === 5 ? matchListBo5 : matchListBo3).push({ tid: t.id, m, games });
       if (t.bestOf === 5) lenBo5[m.score.length] = (lenBo5[m.score.length] || 0) + 1;
       else lenBo3[m.score.length] = (lenBo3[m.score.length] || 0) + 1;
       m.score.forEach(s => {
@@ -742,7 +745,7 @@ function seasonMatchStats() {
       });
     });
   });
-  return { setScores, lenBo3, lenBo5, totalMatches, totalSets };
+  return { setScores, lenBo3, lenBo5, totalMatches, totalSets, matchListBo3, matchListBo5 };
 }
 
 /* ---------- Ton champion (128e joueur, créé par le joueur) ---------- */
