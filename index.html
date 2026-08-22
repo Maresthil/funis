@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fun'is — La saison de tennis des légendes</title>
+  <meta name="description" content="Fun'is : simulez une saison ATP 2026 complète avec 128 personnalités légendaires.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎾</text></svg>">
+</head>
+<body>
+  <div id="app">
+    <!-- Écran d'accueil / nouvelle saison -->
+    <div id="screen-onboarding" class="screen hidden"></div>
+    <!-- Application principale -->
+    <div id="screen-main" class="screen hidden">
+      <header id="topbar">
+        <div class="topbar-inner">
+          <div id="logo" title="Fun'is">
+            <span class="logo-ball">🎾</span>
+            <span class="logo-text">FUN<span class="logo-apos">'</span>IS</span>
+            <span class="logo-sub">SAISON 2026</span>
+          </div>
+          <nav id="mainnav">
+            <button data-nav="season" class="nav-btn active">Saison</button>
+            <button data-nav="rankings" class="nav-btn">Classements</button>
+            <button data-nav="players" class="nav-btn">Joueurs</button>
+            <button data-nav="history" class="nav-btn">Historique</button>
+            <button data-nav="favorites" class="nav-btn">Mes paris</button>
+          </nav>
+          <button id="bank-chip" class="hidden" title="Voir mes paris"></button>
+        </div>
+      </header>
+      <main id="view"></main>
+      <footer id="footer">
+        <span>Fun'is — simulation fantaisiste de la saison ATP 2026 · points &amp; prize money du circuit ATP (en €)</span>
+        <button id="btn-reset" class="link-btn">Nouvelle saison</button>
+      </footer>
+    </div>
+  </div>
+
+  <!-- Fenêtre de match -->
+  <div id="modal-overlay" class="hidden">
+    <div id="modal-match"></div>
+  </div>
+  <!-- Carte joueur (peut s'ouvrir au-dessus d'un match) -->
+  <div id="card-overlay" class="hidden">
+    <div id="card-modal"></div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/engine.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
