@@ -6,7 +6,7 @@
 
 "use strict";
 
-const STORAGE_KEY = "funis_save_v8";
+const STORAGE_KEY = "funis_save_v9";
 const CASHOUT_RATE = 0.8;   // le bookmaker rachète un pari de saison à 80 % de sa juste valeur
 const TBET_SIMS = 250;      // simulations du tableau réel pour coter les paris de tournoi
 const TBET_MIN = 100;       // mise minimale d'un pari de tournoi
@@ -201,7 +201,9 @@ function newSeason(rawPlayers) {
     season: 1,              // 1 à MAX_SEASONS (2026 → 2030)
     year: START_YEAR,
     lastSeasonRank: null,   // pid -> rang final de la saison précédente (tie-break des classements)
-    career: { seasons: [], stats: {}, match: null }, // cumul des saisons passées
+    defending: null,        // tourneyId -> {pid: pts} : points à défendre (classement glissant 12 mois)
+    careerMoney: {},        // pid -> prize money cumulé des saisons PASSÉES (la saison en cours s'ajoute)
+    career: { seasons: [], stats: {}, match: null, no1Counts: {} }, // cumul des saisons passées
     players: buildPlayers(roster),
     favorites: [],          // les 5 joueurs pariés (mise en avant dans l'UI)
     bets: [],               // [{pid, amount, sold?}] — total = BET_BUDGET
@@ -267,19 +269,100 @@ function sortedByMoney() {
     (lastSeasonRankOf(a.id) - lastSeasonRankOf(b.id)) ||
     (a.id - b.id));
 }
+/* ---------- Classement ATP glissant sur 12 mois (mode carrière) ----------
+   À tout moment : points des tournois déjà joués cette saison + points
+   « défendus » de la saison précédente pour les tournois pas encore rejoués.
+   En saison 1 (rien à défendre), le glissant coïncide avec la race.
+   Il sert aux entrées en tournoi et aux têtes de série ; la race de l'année
+   garde la qualification au Masters de Turin. */
+function rollingMap() {
+  const map = {};
+  state.players.forEach(p => { map[p.id] = 0; });
+  CALENDAR.forEach(t => {
+    const rec = state.tournaments[t.id];
+    if (rec && rec.status === "done") {
+      Object.entries(rec.recap.results).forEach(([pid, r]) => {
+        if (map[pid] !== undefined) map[pid] += r.pts;
+      });
+    } else if (state.defending && state.defending[t.id]) {
+      Object.entries(state.defending[t.id]).forEach(([pid, pts]) => {
+        if (map[pid] !== undefined) map[pid] += pts;
+      });
+    }
+  });
+  return map;
+}
+function rollingPoints(pid) { return rollingMap()[pid] || 0; }
+function sortedByRolling() {
+  const rm = rollingMap();
+  return state.players.slice().sort((a, b) =>
+    (rm[b.id] - rm[a.id]) ||
+    (state.points[b.id] - state.points[a.id]) ||
+    (state.money[b.id] - state.money[a.id]) ||
+    (lastSeasonRankOf(a.id) - lastSeasonRankOf(b.id)) ||
+    (a.id - b.id));
+}
+function sortedByRollingWithTieShuffle() {
+  const rm = rollingMap();
+  const groups = new Map();
+  state.players.forEach(p => {
+    const pts = rm[p.id] || 0;
+    if (!groups.has(pts)) groups.set(pts, []);
+    groups.get(pts).push(p.id);
+  });
+  const sortedPts = Array.from(groups.keys()).sort((a, b) => b - a);
+  const out = [];
+  sortedPts.forEach(pts => {
+    const grp = shuffle(groups.get(pts));
+    grp.sort((x, y) => lastSeasonRankOf(x) - lastSeasonRankOf(y));
+    grp.forEach(id => out.push(id));
+  });
+  return out;
+}
+/* Tenant du titre : le joueur qui défend le plus de points sur ce tournoi */
+function defendingChampion(t) {
+  const d = state.defending && state.defending[t.id];
+  if (!d) return null;
+  let best = null, pts = 0;
+  Object.entries(d).forEach(([pid, v]) => { if (v > pts) { pts = v; best = parseInt(pid, 10); } });
+  return best === null ? null : { pid: best, pts };
+}
+
+/* ---------- Prize money de carrière (cumul toutes saisons) ---------- */
+function careerMoneyOf(pid) {
+  return ((state.careerMoney && state.careerMoney[pid]) || 0) + (state.money[pid] || 0);
+}
+function sortedByCareerMoney() {
+  return state.players.slice().sort((a, b) =>
+    (careerMoneyOf(b.id) - careerMoneyOf(a.id)) ||
+    (state.points[b.id] - state.points[a.id]) ||
+    (lastSeasonRankOf(a.id) - lastSeasonRankOf(b.id)) ||
+    (a.id - b.id));
+}
+
 /* Position (1-indexée) dans le dernier snapshot, pour l'évolution */
+function snapshotList(snap, kind) {
+  if (kind === "money") return snap.ranksMoney;
+  if (kind === "rolling") return snap.ranksRolling;
+  if (kind === "careerMoney") return snap.ranksMoneyCareer;
+  return snap.ranksPts;
+}
 function previousRank(playerId, kind) {
   if (state.snapshots.length < 2) {
     if (state.snapshots.length === 1) return null; // pas de semaine précédente
     return null;
   }
   const prev = state.snapshots[state.snapshots.length - 2];
-  const list = kind === "money" ? prev.ranksMoney : prev.ranksPts;
+  const list = snapshotList(prev, kind);
+  if (!list) return null;
   const idx = list.indexOf(playerId);
   return idx === -1 ? null : idx + 1;
 }
 function currentRank(playerId, kind) {
-  const list = kind === "money" ? sortedByMoney() : sortedByPoints();
+  const list = kind === "money" ? sortedByMoney()
+    : kind === "rolling" ? sortedByRolling()
+    : kind === "careerMoney" ? sortedByCareerMoney()
+    : sortedByPoints();
   return list.findIndex(p => p.id === playerId) + 1;
 }
 
@@ -305,8 +388,11 @@ function selectEntrants(tourney) {
   const eligible = id => !isSuspended(id, tourney);
   if (tourney.cat === "GC")
     return { entrants: state.players.map(p => p.id).filter(eligible), qualifiers: [] };
-  const ranked = sortedByPointsWithTieShuffle().filter(eligible);
-  if (tourney.cat === "FINALS") return { entrants: ranked.slice(0, 8), qualifiers: [] };
+  // Masters de Turin : la RACE de l'année décide des 8 qualifiés
+  if (tourney.cat === "FINALS")
+    return { entrants: sortedByPointsWithTieShuffle().filter(eligible).slice(0, 8), qualifiers: [] };
+  // Masters 1000 : les entrées se font au classement ATP glissant sur 12 mois
+  const ranked = sortedByRollingWithTieShuffle().filter(eligible);
   const direct = ranked.slice(0, M1000_DIRECT);
   const qualifiers = weightedSample(ranked.slice(M1000_DIRECT), 64 - M1000_DIRECT);
   return { entrants: direct.concat(qualifiers), qualifiers };
@@ -355,8 +441,9 @@ function makeDraw(tourney, entrantIds) {
     return { slots, seedsMap };
   }
 
-  // Têtes de série selon le classement de la race (ex aequo mélangés)
-  const ranked = sortedByPointsWithTieShuffle().filter(id => entrantIds.includes(id));
+  // Têtes de série selon le classement ATP glissant sur 12 mois (ex aequo mélangés ;
+  // en saison 1 le glissant coïncide avec la race)
+  const ranked = sortedByRollingWithTieShuffle().filter(id => entrantIds.includes(id));
   const nSeeds = tourney.seeds;
   const seeded = ranked.slice(0, nSeeds);
   seeded.forEach((id, i) => { seedsMap[id] = i + 1; });
@@ -684,6 +771,8 @@ function takeSnapshot(t) {
     name: t.name,
     ranksPts: sortedByPoints().map(p => p.id),
     ranksMoney: sortedByMoney().map(p => p.id),
+    ranksRolling: sortedByRolling().map(p => p.id),
+    ranksMoneyCareer: sortedByCareerMoney().map(p => p.id),
   });
 }
 
@@ -989,7 +1078,13 @@ function customPlayer() {
    - les statistiques (cartes + page Stats) sont cumulées
    ============================================================ */
 function archiveSeason() {
-  if (!state.career) state.career = { seasons: [], stats: {}, match: null };
+  if (!state.career) state.career = { seasons: [], stats: {}, match: null, no1Counts: {} };
+  if (!state.career.no1Counts) state.career.no1Counts = {};
+  // Passages en tête du classement (après chaque tournoi de la saison)
+  state.snapshots.forEach(s => {
+    const list = s.ranksRolling || s.ranksPts;
+    if (list && list.length) state.career.no1Counts[list[0]] = (state.career.no1Counts[list[0]] || 0) + 1;
+  });
   // Cumul des stats joueur
   state.players.forEach(p => {
     const x = playerStatsSeason(p.id);
@@ -1048,7 +1143,19 @@ function startNextSeason() {
     career: state.career, titles: state.titles, matchSpeed: state.matchSpeed,
     cp: customPlayer() ? JSON.parse(JSON.stringify(customPlayer())) : null,
     suspended: {},
+    careerMoney: {},
+    defending: {},
   };
+  // Prize money de carrière : la saison écoulée rejoint le cumul
+  state.players.forEach(p => { keep.careerMoney[p.id] = careerMoneyOf(p.id); });
+  // Points à défendre (classement glissant) : les résultats de chaque tournoi
+  CALENDAR.forEach(t => {
+    const rec = state.tournaments[t.id];
+    if (!rec || !rec.recap) return;
+    const dmap = {};
+    Object.entries(rec.recap.results).forEach(([pid, r]) => { if (r.pts) dmap[pid] = r.pts; });
+    keep.defending[t.id] = dmap;
+  });
   // Une suspension qui dépasse la fin de saison se purge sur la suivante
   Object.entries(state.suspended || {}).forEach(([pid, u]) => {
     if (u > 12) keep.suspended[pid] = u - 12;
@@ -1059,12 +1166,27 @@ function startNextSeason() {
   state.career = keep.career;
   state.titles = keep.titles;         // le palmarès est un acquis de carrière
   state.lastSeasonRank = lastRank;    // classements de départ = fin de saison précédente
+  state.careerMoney = keep.careerMoney;
+  state.defending = keep.defending;   // classement ATP glissant : entrées & têtes de série
   state.suspended = keep.suspended;
   if (keep.matchSpeed !== undefined) state.matchSpeed = keep.matchSpeed;
   if (keep.cp) addCustomPlayer(keep.cp); // même champion, mêmes compétences (le bonus +3 se répartit ensuite)
   state.pendingUpgrade = !!keep.cp;      // l'écran « +3 points » doit être passé avant les paris
   saveState();
   return state;
+}
+
+/* Passages en tête du classement après chaque tournoi (carrière + saison en cours) */
+function no1CountsAll() {
+  const counts = {};
+  Object.entries((state.career && state.career.no1Counts) || {}).forEach(([pid, v]) => {
+    counts[pid] = (counts[pid] || 0) + v;
+  });
+  state.snapshots.forEach(s => {
+    const list = s.ranksRolling || s.ranksPts;
+    if (list && list.length) counts[list[0]] = (counts[list[0]] || 0) + 1;
+  });
+  return counts;
 }
 
 /* Le champion gagne CHAMPION_SEASON_BONUS points entre deux saisons (répartis par le joueur) */
@@ -1098,8 +1220,10 @@ function improveChampion(newSk) {
    un cador rapporte peu par euro, un outsider rapporte gros.
    ============================================================ */
 
-/* Saison complète silencieuse : renvoie le prize money de chaque joueur. */
-function silentSeason(players) {
+/* Saison complète silencieuse : renvoie le prize money de chaque joueur.
+   `defending` (optionnel) : points à défendre par tournoi — le miroir du
+   classement glissant, pour que les cotes restent justes en mode carrière. */
+function silentSeason(players, defending) {
   const n = players.length;
   const pts = new Array(n).fill(0);
   const money = new Array(n).fill(0);
@@ -1108,11 +1232,27 @@ function silentSeason(players) {
   const fat = new Array(n).fill(0);
   const trained = new Array(n).fill(false);
   const playedPrev = new Array(n).fill(false);
+  const simDone = {}; // tourneyId -> {idx: pts} des tournois déjà simulés cette saison
 
   function rankedIds() {
     const dec = allIds.map(i => [pts[i], Math.random(), i]);
     dec.sort((x, y) => (y[0] - x[0]) || (x[1] - y[1]));
     return dec.map(d => d[2]);
+  }
+  // Classement glissant simulé : tournois joués dans la sim + points défendus sinon
+  function rolledIds() {
+    if (!defending) return rankedIds();
+    const rp = new Array(n).fill(0);
+    CALENDAR.forEach(t => {
+      const src = simDone[t.id] || defending[t.id];
+      if (src) Object.entries(src).forEach(([i, v]) => {
+        const k = parseInt(i, 10);
+        if (k < n) rp[k] += v;
+      });
+    });
+    const dec = allIds.map(i => [rp[i], pts[i], Math.random(), i]);
+    dec.sort((x, y) => (y[0] - x[0]) || (y[1] - x[1]) || (x[2] - y[2]));
+    return dec.map(d => d[3]);
   }
   const modOf = i => {
     if (trained[i]) return MOD_TRAINED;
@@ -1169,8 +1309,8 @@ function silentSeason(players) {
       let entrants;
       if (t.cat === "GC") entrants = allIds.slice();
       else {
-        // Masters 1000 : 56 qualifiés directs + 8 repêchés au tirage pondéré
-        const ranked = rankedIds();
+        // Masters 1000 : entrées au classement glissant — 56 directs + 8 repêchés pondérés
+        const ranked = rolledIds();
         const direct = ranked.slice(0, M1000_DIRECT);
         entrants = direct.concat(weightedSample(ranked.slice(M1000_DIRECT), 64 - M1000_DIRECT));
       }
@@ -1179,11 +1319,12 @@ function silentSeason(players) {
       if (t.randomDraw) slots = shuffle(entrants);
       else {
         const inDraw = new Set(entrants);
-        const seeded = rankedIds().filter(id => inDraw.has(id)).slice(0, t.seeds);
+        const seeded = rolledIds().filter(id => inDraw.has(id)).slice(0, t.seeds);
         const seededSet = new Set(seeded);
         slots = placeSeedsAndRest(t.drawSize, seeded, entrants.filter(id => !seededSet.has(id)));
       }
       const ptsTable = POINTS[t.cat];
+      const tp = {}; // points gagnés sur CE tournoi (pour le glissant simulé)
       let current = slots;
       roundNames(t.drawSize).forEach(rName => {
         const next = [];
@@ -1193,23 +1334,26 @@ function silentSeason(players) {
           const l = w === a ? b : a;
           pts[l] += ptsTable[rName] || 0;
           money[l] += przTable[rName] || 0;
+          tp[l] = (tp[l] || 0) + (ptsTable[rName] || 0);
           next.push(w);
         }
         current = next;
       });
       pts[current[0]] += ptsTable.W;
       money[current[0]] += przTable.W;
+      tp[current[0]] = (tp[current[0]] || 0) + ptsTable.W;
+      simDone[t.id] = tp;
     }
   });
   return money;
 }
 
 /* Prize money attendu par joueur (moyenne Monte-Carlo). */
-function computeExpectedPrizes(players, nSims) {
+function computeExpectedPrizes(players, nSims, defending) {
   const n = players.length;
   const totals = new Array(n).fill(0);
   for (let s = 0; s < nSims; s++) {
-    const m = silentSeason(players);
+    const m = silentSeason(players, defending);
     for (let i = 0; i < n; i++) totals[i] += m[i];
   }
   const refs = {};
@@ -1219,7 +1363,7 @@ function computeExpectedPrizes(players, nSims) {
 
 function ensureRefs() {
   if (state.refs) return state.refs;
-  state.refs = computeExpectedPrizes(state.players, ODDS_SIMS);
+  state.refs = computeExpectedPrizes(state.players, ODDS_SIMS, state.defending);
   const vals = Object.values(state.refs);
   state.refAvg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
   saveState();

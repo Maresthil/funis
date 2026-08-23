@@ -1024,3 +1024,11 @@ tr.top-cut td { border-bottom: 2.5px dashed var(--gold); }
 .cl-bank { font-weight: 700; font-variant-numeric: tabular-nums; }
 .cl-bank.up { color: var(--green, #1d8a43); }
 .cl-bank.down { color: var(--red, #c0392b); }
+
+/* ============ v16 : classement glissant, prize carrière, tenants du titre ============ */
+.t-defend {
+  font-size: 12px; color: #6b7a92; margin: 6px 0 2px;
+  display: flex; align-items: center; gap: 5px; flex-wrap: wrap;
+}
+.t-defend strong { color: var(--navy, #01173f); }
+.badge.badge-defend { background: rgba(255, 255, 255, .15); color: #ffd977; }

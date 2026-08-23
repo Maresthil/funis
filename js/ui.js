@@ -67,7 +67,7 @@ function navigate(view, params = {}) {
   if (view === "season") renderSeason(el);
   else if (view === "tournament") renderTournament(el, params.id, !!params.readOnly);
   else if (view === "recap") renderRecap(el, params.id);
-  else if (view === "rankings") renderRankings(el, params.tab || "points");
+  else if (view === "rankings") renderRankings(el, params.tab || (state.defending ? "atp" : "points"));
   else if (view === "history") renderHistory(el);
   else if (view === "favorites") renderFavorites(el);
   else if (view === "players") renderPlayers(el);
@@ -271,16 +271,16 @@ function renderPlayerStep(container) {
     <div class="create-layout">
       <div>
         <label class="cp-label">Prénom</label>
-        <input class="cp-input" id="cp-prenom" placeholder="Ton prenom" maxlength="20">
+        <input class="cp-input" id="cp-prenom" placeholder="Sébastien" maxlength="20">
         <label class="cp-label">Nom</label>
-        <input class="cp-input" id="cp-nom" placeholder="Ton nom" maxlength="24">
+        <input class="cp-input" id="cp-nom" placeholder="Comte" maxlength="24">
         <label class="cp-label">Club</label>
-        <input class="cp-input" id="cp-club" placeholder="Ton club" maxlength="30">
+        <input class="cp-input" id="cp-club" placeholder="TC Villeurbanne" maxlength="30">
         <label class="cp-label">Nationalité</label>
         <select class="cp-input" id="cp-pays">${countryOptions}</select>
         <label class="cp-label">Classement (de 40 à -15)</label>
         <select class="cp-input" id="cp-classement">
-          ${CLASSEMENTS_FR.map(c => `<option ${c === "30/1" ? "selected" : ""}>${c}</option>`).join("")}
+          ${CLASSEMENTS_FR.map(c => `<option ${c === "15/2" ? "selected" : ""}>${c}</option>`).join("")}
         </select>
       </div>
       <div class="bet-slip">
@@ -590,6 +590,14 @@ function renderSeason(el) {
       </div>
       <div class="t-badges">${catBadge}${surfBadge}
         <span class="badge" style="background:#eef1f6;color:#5d6d88">${t.drawSize} joueurs</span></div>
+      ${(() => {
+        // Points à défendre (mode carrière) : le tenant du titre, tant que le tournoi n'est pas rejoué
+        if (done) return "";
+        const dc = defendingChampion(t);
+        if (!dc) return "";
+        const dp = getPlayer(dc.pid);
+        return `<div class="t-defend">🛡 ${flagHTML(dp.flag)} <strong>${dp.name}</strong> défend ${fmtPts(dc.pts)} pts</div>`;
+      })()}
       ${statusHtml}
       <div class="t-foot"></div>`;
 
@@ -637,6 +645,13 @@ function renderTournament(el, tid, readOnly) {
         <span>${t.city} · ${tourneyDates(t)}</span>
         <span class="badge badge-surface-${t.surface}">${t.surfaceLabel}</span>
         <span class="badge badge-m1000" style="background:rgba(255,255,255,.15);color:#fff">${catBadge}</span>
+        ${(() => {
+          if (rec.status === "done") return "";
+          const dc = defendingChampion(t);
+          if (!dc) return "";
+          const dp = getPlayer(dc.pid);
+          return `<span class="badge badge-defend">🛡 ${dp.name} défend ${fmtPts(dc.pts)} pts</span>`;
+        })()}
         ${rec.status === "done" ? '<span class="badge badge-done">Terminé</span>' : ""}
       </div>
     </div>
@@ -1646,9 +1661,11 @@ function renderRecap(el, tid) {
   /* Nouveaux n°1 */
   const leaders = sortedByPoints();
   const moneyLeaders = sortedByMoney();
+  const atpLeader = state.defending ? sortedByRolling()[0] : null;
   right.insertAdjacentHTML("beforeend", `
     <h3 style="margin-top:18px">📊 Après le tournoi</h3>
     <p style="font-size:13.5px">
+      ${atpLeader ? `N°1 mondial (12 mois) : <strong>${flagHTML(atpLeader.flag)} ${atpLeader.name}</strong> (${fmtPts(rollingPoints(atpLeader.id))} pts)<br>` : ""}
       N°1 de la race : <strong>${flagHTML(leaders[0].flag)} ${leaders[0].name}</strong> (${fmtPts(state.points[leaders[0].id])} pts)<br>
       Leader prize money : <strong>${flagHTML(moneyLeaders[0].flag)} ${moneyLeaders[0].name}</strong> (${fmtEuro(state.money[moneyLeaders[0].id])})
     </p>`);
@@ -1677,15 +1694,27 @@ function renderRecap(el, tid) {
    CLASSEMENTS
    ============================================================ */
 function renderRankings(el, tab) {
+  const careerMode = !!state.defending; // saison 2+ : le glissant existe
+  if (tab === "atp" && !careerMode) tab = "points";
+  const cutNote = tab === "atp"
+    ? "— — ligne dorée : top 56 = entrée directe en Masters 1000"
+    : tab === "points"
+      ? (careerMode ? "— — ligne dorée : top 8 = qualification au Masters de Turin"
+        : "— — ligne dorée : qualification (top 56 Masters 1000 / top 8 Masters)")
+      : "";
   el.insertAdjacentHTML("beforeend", `
     <div class="page-title">Classements ${state.year || START_YEAR}</div>
-    <div class="page-sub">Race ATP et prize money — l'évolution est calculée par rapport au tournoi précédent.
-      <span class="cut-note">— — ligne dorée : qualification (top 64 Masters 1000 / top 8 Masters)</span></div>`);
+    <div class="page-sub">${careerMode
+      ? "Classement ATP glissant sur 12 mois (entrées &amp; têtes de série), race de l'année (Masters de Turin) et prize money."
+      : "Race ATP et prize money — l'évolution est calculée par rapport au tournoi précédent."}
+      ${cutNote ? `<span class="cut-note">${cutNote}</span>` : ""}</div>`);
 
   const tabs = document.createElement("div");
   tabs.className = "rank-tabs";
-  tabs.appendChild(mkBtn("🎾 Points (Race)", "rank-tab" + (tab === "points" ? " active" : ""), () => navigate("rankings", { tab: "points" })));
-  tabs.appendChild(mkBtn("💰 Prize money", "rank-tab" + (tab === "money" ? " active" : ""), () => navigate("rankings", { tab: "money" })));
+  if (careerMode)
+    tabs.appendChild(mkBtn("🌍 Classement ATP", "rank-tab" + (tab === "atp" ? " active" : ""), () => navigate("rankings", { tab: "atp" })));
+  tabs.appendChild(mkBtn(`🎾 Race ${state.year || START_YEAR}`, "rank-tab" + (tab === "points" ? " active" : ""), () => navigate("rankings", { tab: "points" })));
+  tabs.appendChild(mkBtn(careerMode ? "💰 Prize money carrière" : "💰 Prize money", "rank-tab" + (tab === "money" ? " active" : ""), () => navigate("rankings", { tab: "money" })));
   el.appendChild(tabs);
 
   const card = document.createElement("div");
@@ -1693,16 +1722,23 @@ function renderRankings(el, tab) {
   const table = document.createElement("table");
   table.className = "data";
   const isMoney = tab === "money";
+  const isAtp = tab === "atp";
+  const rm = isAtp ? rollingMap() : null;
+  const mainHead = isMoney ? (careerMode ? "Carrière" : "Prize money") : isAtp ? "Points (12 mois)" : "Points";
+  const secHead = isMoney ? (careerMode ? "Saison " + state.year : "Points")
+    : isAtp ? "Race " + state.year : "Prize money";
   table.innerHTML = `<thead><tr>
     <th class="col-rank">Rang</th><th>Joueur</th>
-    <th class="num">${isMoney ? "Prize money" : "Points"}</th>
-    <th class="num col-sec">${isMoney ? "Points" : "Prize money"}</th></tr></thead>`;
+    <th class="num">${mainHead}</th>
+    <th class="num col-sec">${secHead}</th></tr></thead>`;
   const tbody = document.createElement("tbody");
 
-  const list = isMoney ? sortedByMoney() : sortedByPoints();
+  const list = isMoney ? (careerMode ? sortedByCareerMoney() : sortedByMoney())
+    : isAtp ? sortedByRolling() : sortedByPoints();
+  const moveKind = isMoney ? (careerMode ? "careerMoney" : "money") : isAtp ? "rolling" : "points";
   list.forEach((p, i) => {
     const rank = i + 1;
-    const prev = previousRank(p.id, isMoney ? "money" : "points");
+    const prev = previousRank(p.id, moveKind);
     let move = `<span class="rk-move same">•</span>`;
     if (prev !== null) {
       const d = prev - rank;
@@ -1716,13 +1752,18 @@ function renderRankings(el, tab) {
     }).join("");
     const tr = document.createElement("tr");
     if (state.favorites.includes(p.id)) tr.classList.add("fav-row");
-    if (!isMoney && (rank === 8 || rank === 64)) tr.classList.add("top-cut");
+    if (isAtp && rank === M1000_DIRECT) tr.classList.add("top-cut");
+    if (!isAtp && !isMoney && (rank === 8 || (!careerMode && rank === M1000_DIRECT))) tr.classList.add("top-cut");
+    const mainVal = isMoney ? fmtEuro(Math.round(careerMode ? careerMoneyOf(p.id) : state.money[p.id]))
+      : isAtp ? fmtPts(rm[p.id] || 0) : fmtPts(state.points[p.id]);
+    const secVal = isMoney ? (careerMode ? fmtEuro(state.money[p.id]) : fmtPts(state.points[p.id]) + " pts")
+      : isAtp ? fmtPts(state.points[p.id]) + " pts" : fmtEuro(state.money[p.id]);
     tr.innerHTML = `<td class="col-rank"><span class="rk-pos">${rank}</span>${move}</td>
       <td><div class="player-cell"><span class="pc-flag">${flagHTML(p.flag)}</span>
         <span class="pc-body">${p.name}${state.favorites.includes(p.id) ? " ⭐" : ""}<span class="pc-cat">${p.cat}</span>
         ${titles ? `<span class="title-chips">${titles}</span>` : ""}</span></div></td>
-      <td class="num"><strong>${isMoney ? fmtEuro(state.money[p.id]) : fmtPts(state.points[p.id])}</strong></td>
-      <td class="num col-sec">${isMoney ? fmtPts(state.points[p.id]) + " pts" : fmtEuro(state.money[p.id])}</td>`;
+      <td class="num"><strong>${mainVal}</strong></td>
+      <td class="num col-sec">${secVal}</td>`;
     tr.classList.add("row-clickable");
     tr.title = "Voir la carte de " + p.name;
     tr.addEventListener("click", () => openPlayerCard(p.id));
@@ -1946,8 +1987,56 @@ function renderStats(el) {
   exGrid.appendChild(extremesBoard("Masters 1000 & Masters", "⚡", ms.matchListBo3));
   el.appendChild(exGrid);
 
+  /* Records de carrière */
+  function recordBoard(title, emoji, rows, fmtVal) {
+    const card = document.createElement("div");
+    card.className = "card stat-board";
+    card.innerHTML = `<h3>${emoji} ${title}</h3>`;
+    if (!rows.length) {
+      card.insertAdjacentHTML("beforeend", `<div class="bet-empty" style="color:var(--text-dim)">Rien à signaler pour l'instant.</div>`);
+      return card;
+    }
+    rows.forEach((r, i) => {
+      const p = getPlayer(r.pid);
+      const line = document.createElement("div");
+      line.className = "sb-line row-clickable" + (state.favorites.includes(r.pid) ? " sb-fav" : "");
+      line.innerHTML = `
+        <span class="sb-rank">${i + 1}</span>
+        <span class="sb-p">${flagHTML(p.flag)} ${p.name}</span>
+        <span class="sb-detail">${r.detail || ""}</span>
+        <span class="sb-pct">${fmtVal(r.value)}</span>`;
+      line.addEventListener("click", () => openPlayerCard(r.pid));
+      card.appendChild(line);
+    });
+    return card;
+  }
+  el.insertAdjacentHTML("beforeend", `<div class="page-title" style="font-size:24px;margin-top:18px">Records de carrière</div>`);
+  const recGrid = document.createElement("div");
+  recGrid.className = "stats-grid stats-grid-3";
+  // Passages en tête du classement après chaque tournoi
+  const no1 = no1CountsAll();
+  recGrid.appendChild(recordBoard("N°1 mondial (après chaque tournoi)", "👑",
+    Object.entries(no1).map(([pid, v]) => ({ pid: parseInt(pid, 10), value: v }))
+      .sort((a, b) => b.value - a.value).slice(0, 10),
+    v => "×" + v));
+  // Titres en Grand Chelem (carrière)
+  const gcRows = state.players
+    .map(p => {
+      const tids = (state.titles[p.id] || []);
+      const gc = tids.filter(tid => (CALENDAR.find(c => c.id === tid) || {}).cat === "GC").length;
+      return { pid: p.id, value: gc, detail: tids.length + " titre" + (tids.length > 1 ? "s" : "") + " en tout" };
+    })
+    .filter(r => r.value > 0)
+    .sort((a, b) => b.value - a.value).slice(0, 10);
+  recGrid.appendChild(recordBoard("Titres en Grand Chelem", "🏆", gcRows, v => v + " GC"));
+  // Gains de carrière
+  const moneyRows = sortedByCareerMoney().slice(0, 10)
+    .map(p => ({ pid: p.id, value: careerMoneyOf(p.id) }));
+  recGrid.appendChild(recordBoard("Gains de carrière", "💼", moneyRows, v => fmtEuro(Math.round(v))));
+  el.appendChild(recGrid);
+
   el.insertAdjacentHTML("beforeend", `<div class="page-sub" style="margin-top:6px;font-size:12px">
-    ${fmtPts(ms.totalMatches)} matchs et ${fmtPts(ms.totalSets)} sets joués cette saison.</div>`);
+    ${fmtPts(ms.totalMatches)} matchs et ${fmtPts(ms.totalSets)} sets joués${multiSeason ? " depuis " + START_YEAR : " cette saison"}.</div>`);
 }
 
 /* ============================================================
@@ -2047,6 +2136,10 @@ function openPlayerCard(pid) {
         <div class="pcs"><div class="v">${titles.length} / ${stats.tournamentsPlayed}</div><div class="pct">${pct(titles.length, stats.tournamentsPlayed)}</div><div class="l">Titres 🏆 / tournois</div></div>
         <div class="pcs"><div class="v">${stats.finals} / ${stats.tournamentsPlayed}</div><div class="pct">${pct(stats.finals, stats.tournamentsPlayed)}</div><div class="l">Finales / tournois</div></div>
       </div>
+      ${state.defending ? `<div class="pcard-betline">
+        🌍 Classement ATP (12 mois) : <strong>n°${currentRank(pid, "rolling")}</strong> (${fmtPts(rollingPoints(pid))} pts)
+        · 💼 Prize money carrière : <strong>${fmtEuro(Math.round(careerMoneyOf(pid)))}</strong>
+      </div>` : ""}
       ${state.refs ? `<div class="pcard-betline">
         📈 Prize attendu par le bookmaker : <strong>${fmtEuro(state.refs[pid])}</strong>
         · cote <span class="odds-badge">×${betOdds(pid).toFixed(2)}</span>
