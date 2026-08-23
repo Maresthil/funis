@@ -271,7 +271,7 @@ function renderPlayerStep(container) {
     <div class="create-layout">
       <div>
         <label class="cp-label">Prénom</label>
-        <input class="cp-input" id="cp-prenom" placeholder="Ton prénom" maxlength="20">
+        <input class="cp-input" id="cp-prenom" placeholder="Ton prenom" maxlength="20">
         <label class="cp-label">Nom</label>
         <input class="cp-input" id="cp-nom" placeholder="Ton nom" maxlength="24">
         <label class="cp-label">Club</label>
