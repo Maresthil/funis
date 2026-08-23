@@ -254,8 +254,12 @@ const CLASSEMENTS_FR = ["40", "30/5", "30/4", "30/3", "30/2", "30/1", "30",
   "5/6", "4/6", "3/6", "2/6", "1/6", "0", "-2/6", "-4/6", "-15"];
 
 function renderPlayerStep(container) {
+  // Ton champion a le MÊME total que la moyenne du plateau : son avantage,
+  // c'est le profil sur mesure (et les +3 points par saison en carrière).
+  const TARGET = championSkillTotal();
   const sk = {};
-  SKILL_KEYS.forEach(k => { sk[k] = 8; }); // départ à 80, 5 points bonus à placer (total 85)
+  const base = Math.max(1, Math.min(10, Math.floor(TARGET / 10)));
+  SKILL_KEYS.forEach(k => { sk[k] = base; }); // le reliquat (0 à 9 points) est à placer
 
   const countryOptions = Object.entries(COUNTRY_NAMES)
     .sort((a, b) => a[1].localeCompare(b[1], "fr"))
@@ -265,8 +269,9 @@ function renderPlayerStep(container) {
   container.innerHTML = `
     <h2>2 · Crée ton champion — le 128<sup>e</sup> joueur</h2>
     <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
-      C'est toi qui entres sur le circuit avec un avantage : <strong>${CUSTOM_SKILL_TOTAL} points</strong>
-      de compétences (contre 70 pour le plateau), chacune de 1 à 10.
+      Tu entres sur le circuit avec <strong>${TARGET} points</strong> de compétences — la moyenne
+      du plateau, ni plus ni moins. Ton avantage : un profil <strong>sur mesure</strong>, chacune de 1 à 10
+      (et +${CHAMPION_SEASON_BONUS} points par saison en mode carrière).
       Un pari de ${fmtEuro(CUSTOM_BET)} sera automatiquement placé sur toi — le bookmaker ajustera ta cote. 🎾</p>
     <div class="create-layout">
       <div>
@@ -284,7 +289,7 @@ function renderPlayerStep(container) {
         </select>
       </div>
       <div class="bet-slip">
-        <h3>⚙️ Tes ${CUSTOM_SKILL_TOTAL} points de compétences</h3>
+        <h3>⚙️ Tes ${TARGET} points de compétences</h3>
         <div class="cp-remaining" id="cp-remaining"></div>
         <div id="cp-skills"></div>
       </div>
@@ -304,26 +309,26 @@ function renderPlayerStep(container) {
         <span class="cp-skill-label">${s.label}</span>
         <button class="cp-step" data-k="${s.key}" data-d="-1" ${sk[s.key] <= 1 ? "disabled" : ""}>−</button>
         <span class="cp-skill-val">${sk[s.key]}</span>
-        <button class="cp-step" data-k="${s.key}" data-d="1" ${sk[s.key] >= 10 || total() >= CUSTOM_SKILL_TOTAL ? "disabled" : ""}>+</button>
+        <button class="cp-step" data-k="${s.key}" data-d="1" ${sk[s.key] >= 10 || total() >= TARGET ? "disabled" : ""}>+</button>
         <span class="cp-skill-bar"><span style="width:${sk[s.key] * 10}%"></span></span>`;
       skillsDiv.appendChild(row);
     });
     skillsDiv.querySelectorAll(".cp-step").forEach(b => b.addEventListener("click", () => {
       const k = b.dataset.k, d = parseInt(b.dataset.d, 10);
       const t = total();
-      if (d > 0 && (sk[k] >= 10 || t >= CUSTOM_SKILL_TOTAL)) return;
+      if (d > 0 && (sk[k] >= 10 || t >= TARGET)) return;
       if (d < 0 && sk[k] <= 1) return;
       sk[k] += d;
       draw(); update();
     }));
-    const rem = CUSTOM_SKILL_TOTAL - total();
+    const rem = TARGET - total();
     $("#cp-remaining").innerHTML = rem === 0
-      ? `<span style="color:#7dedaa">✓ ${CUSTOM_SKILL_TOTAL} / ${CUSTOM_SKILL_TOTAL} points répartis</span>`
+      ? `<span style="color:#7dedaa">✓ ${TARGET} / ${TARGET} points répartis — ajuste librement avec − et +</span>`
       : `<span style="color:#ffd977">${rem} point${rem > 1 ? "s" : ""} restant${rem > 1 ? "s" : ""} à placer</span>`;
   }
   function update() {
     const name = ($("#cp-prenom").value.trim() + " " + $("#cp-nom").value.trim()).trim();
-    $("#cp-go").disabled = !(name.length >= 3 && total() === CUSTOM_SKILL_TOTAL);
+    $("#cp-go").disabled = !(name.length >= 3 && total() === TARGET);
   }
   ["cp-prenom", "cp-nom"].forEach(id => $("#" + id).addEventListener("input", update));
   $("#cp-go").addEventListener("click", () => {

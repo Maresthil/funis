@@ -6,7 +6,7 @@
 
 "use strict";
 
-const STORAGE_KEY = "funis_save_v9";
+const STORAGE_KEY = "funis_save_v10";
 const CASHOUT_RATE = 0.8;   // le bookmaker rachète un pari de saison à 80 % de sa juste valeur
 const TBET_SIMS = 250;      // simulations du tableau réel pour coter les paris de tournoi
 const TBET_MIN = 100;       // mise minimale d'un pari de tournoi
@@ -37,7 +37,14 @@ const BET_BUDGET = 10000;   // budget de paris en début de saison
 const BET_PLAYERS = 5;      // nombre de joueurs à parier (dont ton champion)
 const CUSTOM_BET = 2000;    // pari automatique et fixe sur ton champion
 const ROSTER_SIZE = 127;    // 127 joueurs de plateau + ton champion = 128
-const CUSTOM_SKILL_TOTAL = 85; // ton champion a 85 points (contre 70 pour le plateau)
+/* Total de compétences du champion = la MOYENNE du plateau (équité) :
+   70 en mode légendes, ~87 en mode ATP (99 → 75), la moyenne réelle en CSV.
+   Son avantage : un profil sur mesure, et +3 points par saison en carrière. */
+function championSkillTotal() {
+  const others = state.players.filter(p => !p.custom);
+  const sum = others.reduce((s, p) => s + SKILL_KEYS.reduce((a, k) => a + p.sk[k], 0), 0);
+  return Math.round(sum / others.length);
+}
 const ODDS_SIMS = 120;      // saisons Monte-Carlo pour calibrer les cotes
 
 /* ---------- Carrière multisaison ---------- */
