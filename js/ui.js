@@ -271,16 +271,16 @@ function renderPlayerStep(container) {
     <div class="create-layout">
       <div>
         <label class="cp-label">Prénom</label>
-        <input class="cp-input" id="cp-prenom" placeholder="Sébastien" maxlength="20">
+        <input class="cp-input" id="cp-prenom" placeholder="Mon prénom" maxlength="20">
         <label class="cp-label">Nom</label>
-        <input class="cp-input" id="cp-nom" placeholder="Comte" maxlength="24">
+        <input class="cp-input" id="cp-nom" placeholder="Mon nom" maxlength="24">
         <label class="cp-label">Club</label>
-        <input class="cp-input" id="cp-club" placeholder="TC Villeurbanne" maxlength="30">
+        <input class="cp-input" id="cp-club" placeholder="Mon club" maxlength="30">
         <label class="cp-label">Nationalité</label>
         <select class="cp-input" id="cp-pays">${countryOptions}</select>
         <label class="cp-label">Classement (de 40 à -15)</label>
         <select class="cp-input" id="cp-classement">
-          ${CLASSEMENTS_FR.map(c => `<option ${c === "15/2" ? "selected" : ""}>${c}</option>`).join("")}
+          ${CLASSEMENTS_FR.map(c => `<option ${c === "30/1" ? "selected" : ""}>${c}</option>`).join("")}
         </select>
       </div>
       <div class="bet-slip">
