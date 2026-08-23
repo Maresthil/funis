@@ -6,7 +6,7 @@
 
 "use strict";
 
-const STORAGE_KEY = "funis_save_v10";
+const STORAGE_KEY = "funis_save_v12";
 const CASHOUT_RATE = 0.8;   // le bookmaker rachète un pari de saison à 80 % de sa juste valeur
 const TBET_SIMS = 250;      // simulations du tableau réel pour coter les paris de tournoi
 const TBET_MIN = 100;       // mise minimale d'un pari de tournoi
@@ -33,7 +33,9 @@ const FORM_META = {
   fatigue:  { icon: "😓", label: "Fatigué" },
   crame:    { icon: "🥵", label: "Cramé" },
 };
-const BET_BUDGET = 10000;   // budget de paris en début de saison
+const BET_BUDGET = 10000;   // capital de départ de la CARRIÈRE (saison 1 uniquement)
+const TAX_RATE = 0.30;      // impôt sur le gain global d'une saison (aucune taxe en cas de perte)
+const DOPE_COST = 1000;     // prix d'une dose de dopage (payée en cash)
 const BET_PLAYERS = 5;      // nombre de joueurs à parier (dont ton champion)
 const CUSTOM_BET = 2000;    // pari automatique et fixe sur ton champion
 const ROSTER_SIZE = 127;    // 127 joueurs de plateau + ton champion = 128
@@ -210,10 +212,12 @@ function newSeason(rawPlayers) {
     lastSeasonRank: null,   // pid -> rang final de la saison précédente (tie-break des classements)
     defending: null,        // tourneyId -> {pid: pts} : points à défendre (classement glissant 12 mois)
     careerMoney: {},        // pid -> prize money cumulé des saisons PASSÉES (la saison en cours s'ajoute)
-    career: { seasons: [], stats: {}, match: null, no1Counts: {} }, // cumul des saisons passées
+    career: { seasons: [], stats: {}, match: null, no1Counts: {}, hot: { won: 0, played: 0 } }, // cumul des saisons passées
+    hotStats: { won: 0, played: 0 }, // hot points de ton champion cette saison
     players: buildPlayers(roster),
-    favorites: [],          // les 5 joueurs pariés (mise en avant dans l'UI)
-    bets: [],               // [{pid, amount, sold?}] — total = BET_BUDGET
+    favorites: [],          // les 5 joueurs SUIVIS (dont ton champion) — indépendants des paris
+    bankroll: BET_BUDGET,   // capital de départ de la saison (10 000 € en saison 1, puis report net d'impôt)
+    bets: [],               // paris de saison libres [{pid, amount, sold?}] — 0 à 5, total ≤ bankroll
     betsPlaced: false,
     cash: 0,                // portefeuille cash (mise non placée + cash-out + paris de tournoi gagnés)
     tbets: [],              // paris de tournoi [{id, tourneyId, market, pick, label, odds, stake, status, payout}]
@@ -575,14 +579,39 @@ function baseSkillDiff(skA, skB, surfKey) {
     + W_TACTIQUE * (skA.tactique - skB.tactique);
 }
 
+/* Modèle de probabilités d'un match : partagé entre la simulation classique
+   (jeu par jeu) et le mode Hot Points (point par point, interactif). */
+function matchProbModel(skA, skB, surfKey, modA, modB) {
+  const diffAB = baseSkillDiff(skA, skB, surfKey) + ((modA || 0) - (modB || 0));
+  const endDiff = skA.endurance - skB.endurance;
+  const menDiff = skA.mental - skB.mental;
+  // Fatigue : bonus/malus croissant selon l'écart d'endurance et la longueur du match
+  const fatigueTerm = totalGames => Math.max(0, totalGames - FATIGUE_START) * FATIGUE_RATE * endDiff;
+  return {
+    game(serverA, isDecider, totalGames) {
+      const serveSkill = serverA ? skA.service : skB.service;
+      let logit = SERVE_BASE + SERVE_PER_PT * serveSkill; // avantage du serveur
+      let d = LOGIT_SCALE * diffAB + fatigueTerm(totalGames);
+      if (isDecider) d += MENTAL_DECIDER * menDiff;
+      logit += serverA ? d : -d;
+      return 1 / (1 + Math.exp(-logit));
+    },
+    tbPoint(serverA, isDecider, totalGames) {
+      const serveSkill = serverA ? skA.service : skB.service;
+      let logit = 0.06 + 0.035 * serveSkill;
+      let d = LOGIT_SCALE * 0.7 * diffAB + fatigueTerm(totalGames) + MENTAL_TIEBREAK * menDiff;
+      if (isDecider) d += MENTAL_DECIDER * 0.5 * menDiff;
+      logit += serverA ? d : -d;
+      return 1 / (1 + Math.exp(-logit));
+    },
+  };
+}
+
 /* Noyau de simulation : utilisé par les matchs "réels" (avec timeline pour
    l'animation) et par les saisons silencieuses du calcul des cotes. */
 function simulateMatchCore(skA, skB, surfKey, bestOf, withTimeline, modA, modB) {
   const setsToWin = Math.ceil(bestOf / 2);
-  // Écart de compétences + modificateurs de forme (entraîné/fatigué/cramé/dopé)
-  const diffAB = baseSkillDiff(skA, skB, surfKey) + ((modA || 0) - (modB || 0));
-  const endDiff = skA.endurance - skB.endurance;
-  const menDiff = skA.mental - skB.mental;
+  const model = matchProbModel(skA, skB, surfKey, modA, modB);
 
   const timeline = withTimeline ? [] : null;
   const sets = [];
@@ -595,26 +624,8 @@ function simulateMatchCore(skA, skB, surfKey, bestOf, withTimeline, modA, modB) 
   let serverIsA = rnd() < 0.5;
   if (timeline) timeline.push({ t: "start", server: serverIsA ? "A" : "B" });
 
-  // Fatigue : bonus/malus croissant selon l'écart d'endurance et la longueur du match
-  function fatigueTerm() {
-    return Math.max(0, totalGames - FATIGUE_START) * FATIGUE_RATE * endDiff;
-  }
-  function gameWinProbForServer(serverA, isDecider) {
-    const serveSkill = serverA ? skA.service : skB.service;
-    let logit = SERVE_BASE + SERVE_PER_PT * serveSkill; // avantage du serveur
-    let d = LOGIT_SCALE * diffAB + fatigueTerm();
-    if (isDecider) d += MENTAL_DECIDER * menDiff;
-    logit += serverA ? d : -d;
-    return 1 / (1 + Math.exp(-logit));
-  }
-  function tbPointProbForServer(serverA, isDecider) {
-    const serveSkill = serverA ? skA.service : skB.service;
-    let logit = 0.06 + 0.035 * serveSkill;
-    let d = LOGIT_SCALE * 0.7 * diffAB + fatigueTerm() + MENTAL_TIEBREAK * menDiff;
-    if (isDecider) d += MENTAL_DECIDER * 0.5 * menDiff;
-    logit += serverA ? d : -d;
-    return 1 / (1 + Math.exp(-logit));
-  }
+  function gameWinProbForServer(serverA, isDecider) { return model.game(serverA, isDecider, totalGames); }
+  function tbPointProbForServer(serverA, isDecider) { return model.tbPoint(serverA, isDecider, totalGames); }
 
   while (setsA < setsToWin && setsB < setsToWin) {
     const setIdx = sets.length;
@@ -707,6 +718,282 @@ function formatScore(match, winnerFirst) {
   }).join(" ");
 }
 
+/* ============================================================
+   MODE HOT POINTS — les matchs de TON CHAMPION, point par point.
+   Mode turbo qui s'arrête sur les balles de break (dans les deux
+   sens), les balles de set et de match, et TOUS les points de
+   tie-break. À chaque arrêt, tu choisis un coup :
+   - au service : Ace (Service), Lime (Endurance), Agression (Force), Amortie (Adresse)
+   - en retour  : Lime, Agression, Amortie
+   Le Mental booste tous les hot points. Répéter le même coup rend
+   prévisible : l'adversaire s'en souvient et gagne un bonus — le
+   tout modulé par la Tactique des deux joueurs.
+   ============================================================ */
+const HOT_SHOTS = [
+  { key: "ace",       label: "Ace",       icon: "🎯", skill: "service", serveOnly: true },
+  { key: "lime",      label: "Lime",      icon: "🧱", skill: "endurance" },
+  { key: "agression", label: "Agression", icon: "💥", skill: "force" },
+  { key: "amortie",   label: "Amortie",   icon: "🪶", skill: "adresse" },
+];
+const HOT_BASE = 0.05;        // implication : léger bonus de base
+const HOT_SKILL_W = 0.05;     // poids de la compétence du coup choisi (centrée sur 5,5)
+const HOT_MENTAL_W = 0.03;    // le Mental booste chaque hot point
+const HOT_MEMORY_W = 1.0;     // pénalité de prévisibilité (part d'utilisation au-delà de l'uniforme)
+const HOT_MEMORY_TACT = 0.08; // modulation par l'écart de Tactique (adversaire − champion)
+
+function hotShotDelta(champSk, oppSk, shotKey, used, usedTotal, nOpts) {
+  const sh = HOT_SHOTS.find(s => s.key === shotKey);
+  let d = HOT_BASE + HOT_SKILL_W * (champSk[sh.skill] - 5.5) + HOT_MENTAL_W * (champSk.mental - 5.5);
+  if (usedTotal > 0) {
+    const share = (used[shotKey] || 0) / usedTotal;
+    const over = Math.max(0, share - 1 / nOpts);
+    const memFactor = clamp(1 + HOT_MEMORY_TACT * (oppSk.tactique - champSk.tactique), 0.2, 2);
+    d -= HOT_MEMORY_W * over * memFactor;
+  }
+  return d;
+}
+
+/* Probabilité de gagner un JEU selon la probabilité de gagner un POINT (chaîne de Markov) */
+function gameProbFromPoint(p) {
+  const q = 1 - p;
+  const deuceP = (p * p) / (p * p + q * q);
+  return Math.pow(p, 4) * (1 + 4 * q + 10 * q * q) + 20 * Math.pow(p, 3) * Math.pow(q, 3) * deuceP;
+}
+/* Inversion (dichotomie) : quelle proba de point donne cette proba de jeu ? */
+function pointProbFromGame(pGame) {
+  let lo = 0.02, hi = 0.98;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (gameProbFromPoint(mid) < pGame) lo = mid; else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+
+const HOT_KIND_LABEL = { mp: "BALLE DE MATCH", sp: "BALLE DE SET", bp: "BALLE DE BREAK", tb: "POINT DE TIE-BREAK" };
+
+/* Contrôleur interactif : avance point par point, s'arrête sur les points chauds.
+   Utilisation : advance() → {type:"pause", hot} | {type:"end", res} ;
+   choose(key) → même retour ; takeEvents() → événements d'animation à consommer. */
+function createHotMatch(idA, idB, rec) {
+  const t = CALENDAR[rec.index];
+  const surfKey = SURFACE_TO_SKILL[t.surface];
+  const bestOf = t.bestOf;
+  const setsToWin = Math.ceil(bestOf / 2);
+  const skA = getPlayer(idA).sk, skB = getPlayer(idB).sk;
+  const model = matchProbModel(skA, skB, surfKey, formMod(idA, rec), formMod(idB, rec));
+  const cp = customPlayer();
+  const champIsA = !!(cp && idA === cp.id);
+  if (!cp || (!champIsA && idB !== cp.id)) throw new Error("Le mode Hot Points est réservé aux matchs de ton champion.");
+  const champSk = champIsA ? skA : skB;
+  const oppSk = champIsA ? skB : skA;
+
+  const S = {
+    sets: [], tiebreaks: {},
+    setsA: 0, setsB: 0, gA: 0, gB: 0,
+    ptS: 0, ptR: 0,           // points du jeu courant (serveur / relanceur)
+    totalGames: 0,
+    serverIsA: rnd() < 0.5,
+    pPoint: null,             // proba de point du serveur pour le jeu courant
+    inTB: false, tbA: 0, tbB: 0, tbServerA: false, tbFirst: true, tbPair: 0, tbTarget: 7,
+    done: false,
+  };
+  const bp = { convA: 0, convB: 0, savedA: 0, savedB: 0 };
+  const sv = { held: 0, total: 0 };
+  const used = {}; let usedTotal = 0;
+  const hot = { won: 0, played: 0 };
+  let events = [{ t: "start", server: S.serverIsA ? "A" : "B" }];
+  let pendingHot = null;
+
+  const isDecider = () => S.setsA === setsToWin - 1 && S.setsB === setsToWin - 1;
+  const PT_NAMES = ["0", "15", "30", "40"];
+  function ptName(x, y) {
+    if (x >= 3 && y >= 3) return x === y ? "40" : (x > y ? "AV" : "40");
+    return PT_NAMES[Math.min(x, 3)];
+  }
+  function scoreText() {
+    const gC = champIsA ? S.gA : S.gB, gO = champIsA ? S.gB : S.gA;
+    const prev = S.sets.map(s => (champIsA ? s[0] + "-" + s[1] : s[1] + "-" + s[0])).join(" ");
+    let cur;
+    if (S.inTB) {
+      const tC = champIsA ? S.tbA : S.tbB, tO = champIsA ? S.tbB : S.tbA;
+      cur = gC + "-" + gO + " · TB " + tC + "-" + tO;
+    } else {
+      const champServes = S.serverIsA === champIsA;
+      const ptC = champServes ? S.ptS : S.ptR, ptO = champServes ? S.ptR : S.ptS;
+      cur = gC + "-" + gO + " · " + ptName(ptC, ptO) + "-" + ptName(ptO, ptC);
+    }
+    return (prev ? prev + " · " : "") + cur;
+  }
+  function makePause(kind, forChamp) {
+    const champServing = S.inTB ? (S.tbServerA === champIsA) : (S.serverIsA === champIsA);
+    const options = HOT_SHOTS.filter(s => champServing || !s.serveOnly)
+      .map(s => ({ key: s.key, label: s.label, icon: s.icon, skillLabel: SKILLS.find(x => x.key === s.skill).label, value: champSk[s.skill] }));
+    const p = {
+      kind, label: HOT_KIND_LABEL[kind],
+      forChamp, // true : la balle est pour ton champion ; false : contre lui ; null : point neutre (TB)
+      champServing, score: scoreText(), options,
+    };
+    pendingHot = p;
+    events.push({ t: "hot", kind, label: p.label, forChamp, score: p.score, champServing });
+    return { type: "pause", hot: p };
+  }
+
+  function beginGame() {
+    const pGame = model.game(S.serverIsA, isDecider(), S.totalGames);
+    S.pPoint = pointProbFromGame(pGame);
+  }
+  function classifyHot() {
+    const a = S.ptS, b = S.ptR;
+    const serverGP = a >= 3 && a >= b + 1;
+    const returnerGP = b >= 3 && b >= a + 1;
+    if (!serverGP && !returnerGP) return null;
+    const gServer = S.serverIsA ? S.gA : S.gB, gRet = S.serverIsA ? S.gB : S.gA;
+    const setsServer = S.serverIsA ? S.setsA : S.setsB, setsRet = S.serverIsA ? S.setsB : S.setsA;
+    const setIfServer = gServer + 1 >= 6 && gServer + 1 - gRet >= 2;
+    const setIfRet = gRet + 1 >= 6 && gRet + 1 - gServer >= 2;
+    const champServes = S.serverIsA === champIsA;
+    if (returnerGP) {
+      const kind = setIfRet ? (setsRet === setsToWin - 1 ? "mp" : "sp") : "bp";
+      return makePause(kind, !champServes); // la balle est pour le relanceur
+    }
+    if (serverGP && setIfServer) {
+      const kind = setsServer === setsToWin - 1 ? "mp" : "sp";
+      return makePause(kind, champServes);
+    }
+    return null;
+  }
+  function tbPause() {
+    const tgt = S.tbTarget;
+    const aBall = S.tbA >= tgt - 1 && S.tbA >= S.tbB + 1;
+    const bBall = S.tbB >= tgt - 1 && S.tbB >= S.tbA + 1;
+    let kind = "tb", forChamp = null;
+    if (aBall || bBall) {
+      const ballForA = aBall;
+      const setsBall = ballForA ? S.setsA : S.setsB;
+      kind = setsBall === setsToWin - 1 ? "mp" : "sp";
+      forChamp = ballForA === champIsA;
+    }
+    return makePause(kind, forChamp);
+  }
+
+  function endSet() {
+    const setIdx = S.sets.length;
+    S.sets.push([S.gA, S.gB]);
+    if (S.gA > S.gB) S.setsA++; else S.setsB++;
+    events.push({ t: "set", set: setIdx, score: [S.gA, S.gB], setsA: S.setsA, setsB: S.setsB, winner: S.gA > S.gB ? "A" : "B" });
+    S.gA = 0; S.gB = 0;
+    if (S.setsA === setsToWin || S.setsB === setsToWin) S.done = true;
+  }
+  function endGame(serverWon) {
+    const gameToA = S.serverIsA ? serverWon : !serverWon;
+    if (gameToA) S.gA++; else S.gB++;
+    S.totalGames++;
+    sv.total++; if (serverWon) sv.held++;
+    if (!serverWon) { if (gameToA) bp.convA++; else bp.convB++; } // break réel
+    events.push({
+      t: "game", set: S.sets.length, gA: S.gA, gB: S.gB,
+      winner: gameToA ? "A" : "B", server: S.serverIsA ? "A" : "B", broke: !serverWon,
+    });
+    S.serverIsA = !S.serverIsA;
+    S.pPoint = null; S.ptS = 0; S.ptR = 0;
+    if ((S.gA >= 6 || S.gB >= 6) && Math.abs(S.gA - S.gB) >= 2) { endSet(); return; }
+    if (S.gA === 6 && S.gB === 6) {
+      S.inTB = true; S.tbA = 0; S.tbB = 0;
+      S.tbTarget = (isDecider() && bestOf === 5) ? 10 : 7;
+      S.tbServerA = S.serverIsA; S.tbFirst = true; S.tbPair = 0;
+    }
+  }
+  function resolveGamePoint(serverWins) {
+    const isBP = S.ptR >= 3 && S.ptR >= S.ptS + 1;
+    if (serverWins) {
+      if (isBP) { if (S.serverIsA) bp.savedA++; else bp.savedB++; } // BB sauvée (réelle)
+      S.ptS++;
+    } else S.ptR++;
+    if ((S.ptS >= 4 || S.ptR >= 4) && Math.abs(S.ptS - S.ptR) >= 2) endGame(S.ptS > S.ptR);
+  }
+  function resolveTBPoint(serverWins) {
+    const ptToA = S.tbServerA ? serverWins : !serverWins;
+    if (ptToA) S.tbA++; else S.tbB++;
+    if (S.tbFirst) { S.tbServerA = !S.tbServerA; S.tbFirst = false; S.tbPair = 0; }
+    else { S.tbPair++; if (S.tbPair === 2) { S.tbServerA = !S.tbServerA; S.tbPair = 0; } }
+    if ((S.tbA >= S.tbTarget || S.tbB >= S.tbTarget) && Math.abs(S.tbA - S.tbB) >= 2) {
+      const tbToA = S.tbA > S.tbB;
+      if (tbToA) S.gA++; else S.gB++;
+      S.totalGames++;
+      S.tiebreaks[S.sets.length] = [S.tbA, S.tbB];
+      events.push({ t: "tiebreak", set: S.sets.length, gA: S.gA, gB: S.gB, pa: S.tbA, pb: S.tbB, winner: tbToA ? "A" : "B", target: S.tbTarget });
+      S.serverIsA = !S.serverIsA;
+      S.inTB = false;
+      endSet();
+    }
+  }
+  function buildRes() {
+    return {
+      winner: S.setsA > S.setsB ? idA : idB,
+      sets: S.sets, tiebreaks: S.tiebreaks,
+      bp: [[bp.convA, bp.savedA], [bp.convB, bp.savedB]],
+      sv: [sv.held, sv.total],
+      hot: { won: hot.won, played: hot.played },
+    };
+  }
+
+  function advance() {
+    if (pendingHot) return { type: "pause", hot: pendingHot };
+    while (!S.done) {
+      if (S.inTB) return tbPause(); // TOUS les points du tie-break sont chauds
+      if (S.pPoint === null) beginGame();
+      const paused = classifyHot();
+      if (paused) return paused;
+      resolveGamePoint(rnd() < S.pPoint); // point ordinaire, résolu en silence
+    }
+    return { type: "end", res: buildRes() };
+  }
+  function choose(key) {
+    if (!pendingHot) throw new Error("Aucun point chaud en attente.");
+    const opt = pendingHot.options.find(o => o.key === key);
+    if (!opt) throw new Error("Ce coup n'est pas disponible ici.");
+    const d = hotShotDelta(champSk, oppSk, key, used, usedTotal, pendingHot.options.length);
+    used[key] = (used[key] || 0) + 1; usedTotal++;
+    const champServing = pendingHot.champServing;
+    let pServ = S.inTB ? model.tbPoint(S.tbServerA, isDecider(), S.totalGames) : S.pPoint;
+    let logit = Math.log(pServ / (1 - pServ)) + (champServing ? d : -d);
+    pServ = 1 / (1 + Math.exp(-logit));
+    const serverWins = rnd() < pServ;
+    const champWins = champServing ? serverWins : !serverWins;
+    hot.played++; if (champWins) hot.won++;
+    events.push({
+      t: "hotres", shot: key, label: opt.label, icon: opt.icon, champWins,
+      ace: key === "ace" && champWins && champServing, kind: pendingHot.kind,
+    });
+    pendingHot = null;
+    if (S.inTB) resolveTBPoint(serverWins); else resolveGamePoint(serverWins);
+    return advance();
+  }
+  function takeEvents() { const out = events; events = []; return out; }
+
+  return { advance, choose, takeEvents, champIsA, get hotStats() { return hot; } };
+}
+
+/* Enregistre le résultat d'un match joué en mode Hot Points (stats incluses) */
+function commitHotMatch(rec, ctx, res) {
+  if (res.hot) {
+    if (!state.hotStats) state.hotStats = { won: 0, played: 0 };
+    state.hotStats.won += res.hot.won;
+    state.hotStats.played += res.hot.played;
+  }
+  if (ctx.kind === "bracket") applyBracketResult(rec, ctx.roundIdx, ctx.matchIdx, res);
+  else if (ctx.kind === "rr") applyFinalsResult(rec, "rr", ctx.group, ctx.matchIdx, res);
+  else if (ctx.kind === "sf") applyFinalsResult(rec, "sf", null, ctx.matchIdx, res);
+  else applyFinalsResult(rec, "final", null, 0, res);
+  return res;
+}
+/* Hot points gagnés sur toute la carrière (saisons passées + saison en cours) */
+function hotStatsAll() {
+  const c = (state.career && state.career.hot) || { won: 0, played: 0 };
+  const s = state.hotStats || { won: 0, played: 0 };
+  return { won: c.won + s.won, played: c.played + s.played };
+}
+
 /* ---------- Jouer un match du tableau ---------- */
 function playBracketMatch(rec, roundIdx, matchIdx) {
   const match = rec.rounds[roundIdx][matchIdx];
@@ -715,6 +1002,12 @@ function playBracketMatch(rec, roundIdx, matchIdx) {
   match.form1 = formStatus(match.p1, rec);
   match.form2 = formStatus(match.p2, rec);
   const res = simulateMatch(match.p1, match.p2, rec);
+  applyBracketResult(rec, roundIdx, matchIdx, res);
+  return res;
+}
+/* Applique un résultat de match (simulé OU joué en mode Hot Points) au tableau */
+function applyBracketResult(rec, roundIdx, matchIdx, res) {
+  const match = rec.rounds[roundIdx][matchIdx];
   match.winner = res.winner;
   match.score = res.sets;
   match.tiebreaks = res.tiebreaks;
@@ -864,6 +1157,15 @@ function playFinalsMatch(rec, phase, key, matchIdx) {
   match.form1 = formStatus(match.p1, rec);
   match.form2 = formStatus(match.p2, rec);
   const res = simulateMatch(match.p1, match.p2, rec);
+  applyFinalsResult(rec, phase, key, matchIdx, res);
+  return res;
+}
+/* Applique un résultat de match du Masters (simulé OU joué en mode Hot Points) */
+function applyFinalsResult(rec, phase, key, matchIdx, res) {
+  let match;
+  if (phase === "rr") match = rec.rr[key][matchIdx];
+  else if (phase === "sf") match = rec.sf[matchIdx];
+  else match = rec.final;
   match.winner = res.winner;
   match.score = res.sets;
   match.tiebreaks = res.tiebreaks;
@@ -1085,8 +1387,12 @@ function customPlayer() {
    - les statistiques (cartes + page Stats) sont cumulées
    ============================================================ */
 function archiveSeason() {
-  if (!state.career) state.career = { seasons: [], stats: {}, match: null, no1Counts: {} };
+  if (!state.career) state.career = { seasons: [], stats: {}, match: null, no1Counts: {}, hot: { won: 0, played: 0 } };
   if (!state.career.no1Counts) state.career.no1Counts = {};
+  if (!state.career.hot) state.career.hot = { won: 0, played: 0 };
+  // Hot points de la saison rejoignent la carrière
+  state.career.hot.won += (state.hotStats && state.hotStats.won) || 0;
+  state.career.hot.played += (state.hotStats && state.hotStats.played) || 0;
   // Passages en tête du classement (après chaque tournoi de la saison)
   state.snapshots.forEach(s => {
     const list = s.ranksRolling || s.ranksPts;
@@ -1123,7 +1429,8 @@ function archiveSeason() {
   extremes(ms.matchListBo5).forEach(e => cm.listBo5.push({ tid: e.tid, games: e.games, year: e.year, m: keepM(e.m) }));
   extremes(ms.matchListBo3).forEach(e => cm.listBo3.push({ tid: e.tid, games: e.games, year: e.year, m: keepM(e.m) }));
   state.career.match = cm;
-  // Résumé de la saison
+  // Résumé de la saison (bilan financier : gain global imposé à 30 %, perte non taxée)
+  const settle = seasonSettlement();
   const top = sortedByPoints();
   const cp = customPlayer();
   const cpTitles = cp ? Object.values(state.tournaments).filter(r => r.recap && r.recap.champion === cp.id).length : 0;
@@ -1133,7 +1440,7 @@ function archiveSeason() {
     no1: top[0].name, no1Flag: top[0].flag, no1Pts: state.points[top[0].id],
     mastersChamp: finalsRec && finalsRec.recap ? getPlayer(finalsRec.recap.champion).name : "—",
     mastersFlag: finalsRec && finalsRec.recap ? getPlayer(finalsRec.recap.champion).flag : "",
-    bank: Math.round(bankNow()),
+    start: settle.start, gross: settle.gross, tax: settle.tax, bank: settle.net,
     cpTitles,
     cpRank: cp ? currentRank(cp.id, "points") : null,
   });
@@ -1142,6 +1449,7 @@ function archiveSeason() {
 function startNextSeason() {
   if (state.currentIndex < CALENDAR.length) throw new Error("La saison n'est pas terminée.");
   if (state.season >= MAX_SEASONS) throw new Error("Carrière terminée : " + MAX_SEASONS + " saisons maximum.");
+  const settle = seasonSettlement(); // bilan fiscal : le capital NET est reporté (rien d'offert)
   archiveSeason();
   const lastRank = {};
   sortedByPoints().forEach((p, i) => { lastRank[p.id] = i + 1; });
@@ -1152,6 +1460,7 @@ function startNextSeason() {
     suspended: {},
     careerMoney: {},
     defending: {},
+    bankroll: settle.net,
   };
   // Prize money de carrière : la saison écoulée rejoint le cumul
   state.players.forEach(p => { keep.careerMoney[p.id] = careerMoneyOf(p.id); });
@@ -1176,6 +1485,7 @@ function startNextSeason() {
   state.careerMoney = keep.careerMoney;
   state.defending = keep.defending;   // classement ATP glissant : entrées & têtes de série
   state.suspended = keep.suspended;
+  state.bankroll = keep.bankroll;     // capital reporté, net d'impôt
   if (keep.matchSpeed !== undefined) state.matchSpeed = keep.matchSpeed;
   if (keep.cp) addCustomPlayer(keep.cp); // même champion, mêmes compétences (le bonus +3 se répartit ensuite)
   state.pendingUpgrade = !!keep.cp;      // l'écran « +3 points » doit être passé avant les paris
@@ -1381,21 +1691,51 @@ function ensureRefs() {
    moyen du plateau (les outsiders ont une grosse cote). */
 function betOdds(pid) { return state.refAvg / state.refs[pid]; }
 
+/* Les 5 favoris (dont ton champion) : les joueurs que tu SUIS — leurs matchs se
+   jouent à la main, eux seuls peuvent être dopés. Indépendants des paris. */
+function setFavorites(pids) {
+  if (!Array.isArray(pids) || pids.length !== BET_PLAYERS) throw new Error(BET_PLAYERS + " favoris requis.");
+  if (new Set(pids).size !== pids.length) throw new Error("Favoris en double.");
+  pids.forEach(pid => { if (!getPlayer(pid)) throw new Error("Joueur inconnu."); });
+  const cp = customPlayer();
+  if (cp && !pids.includes(cp.id)) throw new Error("Ton champion fait forcément partie de tes favoris.");
+  state.favorites = pids.slice();
+  saveState();
+}
+
+/* Paris de saison LIBRES : 0 à 5 paris, sur n'importe quel joueur (favori ou non),
+   dans la limite du capital. Ce qui n'est pas misé reste en cash. */
 function placeBets(bets) {
   const total = bets.reduce((s, b) => s + b.amount, 0);
-  if (bets.length !== BET_PLAYERS) throw new Error(BET_PLAYERS + " joueurs requis.");
-  if (total > BET_BUDGET) throw new Error("La répartition dépasse le budget de " + fmtEuro(BET_BUDGET) + ".");
+  if (bets.length > BET_PLAYERS) throw new Error(BET_PLAYERS + " paris maximum.");
+  if (new Set(bets.map(b => b.pid)).size !== bets.length) throw new Error("Un seul pari par joueur.");
+  if (total > state.bankroll) throw new Error("La répartition dépasse ton capital de " + fmtEuro(state.bankroll) + ".");
   bets.forEach(b => { if (b.amount < 100) throw new Error("Mise minimale : 100 € par joueur."); });
-  const cp = customPlayer();
-  if (cp) {
-    const cb = bets.find(b => b.pid === cp.id);
-    if (!cb || cb.amount !== CUSTOM_BET) throw new Error("Ton champion porte un pari fixe de " + fmtEuro(CUSTOM_BET) + ".");
-  }
+  if ((state.favorites || []).length !== BET_PLAYERS) throw new Error("Choisis d'abord tes " + BET_PLAYERS + " favoris.");
   state.bets = bets;
-  state.favorites = bets.map(b => b.pid);
   state.betsPlaced = true;
-  state.cash = BET_BUDGET - total; // le reste part en cash, pour les paris de tournoi
+  state.cash = state.bankroll - total; // le reste part en cash (paris de tournoi, dopage)
   saveState();
+}
+
+/* ---------- Bilan financier de fin de saison ----------
+   Gain global imposé à 30 % ; aucune taxe en cas de perte.
+   Le capital net est reporté sur la saison suivante (rien d'offert). */
+function seasonSettlement() {
+  const betsVal = state.bets.reduce((s, b) => s + (b.sold ? 0 : betValue(b)), 0);
+  const openStakes = (state.tbets || []).filter(b => b.status === "open").reduce((s, b) => s + b.stake, 0);
+  const finalTotal = (state.cash || 0) + betsVal + openStakes;
+  const gross = finalTotal - state.bankroll;
+  const tax = gross > 0 ? Math.round(gross * TAX_RATE) : 0;
+  return {
+    start: state.bankroll,
+    cash: Math.round(state.cash || 0),
+    betsVal: Math.round(betsVal),
+    finalTotal: Math.round(finalTotal),
+    gross: Math.round(gross),
+    tax,
+    net: Math.max(0, Math.round(finalTotal - tax)),
+  };
 }
 
 /* ============================================================
@@ -1454,17 +1794,20 @@ function beginTournamentForms(index) {
   });
 }
 
-/* Dopage : booste un de tes 5 joueurs pour le tournoi à venir */
+/* Dopage : booste un de tes 5 favoris pour le tournoi à venir.
+   La dose coûte DOPE_COST € — payée en cash, pas de cash = pas de dopage. */
 function applyDoping(tourneyId, pid) {
   const rec = state.tournaments[tourneyId];
   if (!rec || rec.status !== "active") throw new Error("Tournoi introuvable.");
   if (marketsClosed(rec)) throw new Error("Trop tard : le tournoi a commencé.");
   if ((state.syringes || 0) <= 0) throw new Error("Plus de seringues cette saison.");
-  if (!state.favorites.includes(pid)) throw new Error("Tu ne peux doper qu'un de tes 5 joueurs.");
+  if ((state.cash || 0) < DOPE_COST) throw new Error("La dose coûte " + fmtEuro(DOPE_COST) + " — il te manque du cash.");
+  if (!state.favorites.includes(pid)) throw new Error("Tu ne peux doper qu'un de tes 5 favoris.");
   if (!rec.entrants.includes(pid)) throw new Error("Ce joueur n'est pas au tableau.");
   if (rec.doped !== undefined && rec.doped !== null) throw new Error("Un seul joueur dopé par tournoi.");
   rec.doped = pid;
   state.syringes--;
+  state.cash -= DOPE_COST;
   saveState();
   return rec;
 }
@@ -1507,8 +1850,7 @@ function cashOutQuote(bet) {
 function cashOutBet(pid) {
   const bet = state.bets.find(b => b.pid === pid);
   if (!bet || bet.sold) throw new Error("Pari introuvable ou déjà vendu.");
-  const cp = customPlayer();
-  if (cp && pid === cp.id) throw new Error("On ne se vend pas soi-même ! Le pari sur ton champion est incessible.");
+  // (v18 : le pari sur ton champion est un pari volontaire comme un autre — revendable)
   const q = cashOutQuote(bet);
   bet.sold = { atIndex: state.currentIndex, price: q.price };
   state.cash = (state.cash || 0) + q.price;
@@ -1989,15 +2331,18 @@ function tournamentPool(t) {
   return Object.entries(counts).reduce((s, [r, c]) => s + c * (prz[r] || 0), 0);
 }
 function expectedBankPace() {
-  // [{label, value}] : solde attendu (10 000 € × part du pool déjà distribuée)
+  // [{label, value}] : patrimoine attendu à ce stade = cash conservé + part des
+  // mises de saison déjà « réalisée » (les paris se remplissent au rythme du pool)
   const totalPool = CALENDAR.reduce((s, t) => s + tournamentPool(t), 0);
+  const staked = state.bets.reduce((s, b) => s + b.amount, 0);
+  const kept = state.bankroll - staked; // cash de départ (avant paris de tournoi, EV neutre)
   let cum = 0;
-  const out = [{ label: "Départ", value: 0 }];
+  const out = [{ label: "Départ", value: kept }];
   CALENDAR.forEach(t => {
     const rec = state.tournaments[t.id];
     if (!rec || rec.status !== "done") return;
     cum += tournamentPool(t);
-    out.push({ label: t.city, value: BET_BUDGET * cum / totalPool });
+    out.push({ label: t.city, value: kept + staked * cum / totalPool });
   });
   return out;
 }

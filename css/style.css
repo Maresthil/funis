@@ -1032,3 +1032,134 @@ tr.top-cut td { border-bottom: 2.5px dashed var(--gold); }
 }
 .t-defend strong { color: var(--navy, #01173f); }
 .badge.badge-defend { background: rgba(255, 255, 255, .15); color: #ffd977; }
+
+/* ============ v18 : portefeuille (cash réel vs valeur virtuelle) & fiscalité ============ */
+.fav-locked {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; margin-bottom: 12px;
+  background: rgba(212, 167, 44, .12); border: 1px solid rgba(212, 167, 44, .4);
+  border-radius: 10px; font-size: 14px; color: #ffd977;
+}
+
+.wallet {
+  background: linear-gradient(135deg, #01173f 0%, #0a2a63 60%, #123a80 100%);
+  border-radius: 16px; padding: 20px 22px 18px; color: #fff;
+  margin-bottom: 18px; box-shadow: 0 10px 30px rgba(1, 23, 63, .35);
+}
+.wallet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+.wt-label { font-size: 12px; letter-spacing: .8px; text-transform: uppercase; color: #9fb6e2; font-weight: 700; }
+.wt-value {
+  font-family: "Barlow Condensed", sans-serif; font-weight: 800;
+  font-size: 44px; line-height: 1.05; letter-spacing: .5px;
+}
+.wt-delta { font-size: 14px; font-weight: 700; margin-top: 2px; }
+.wt-delta.up { color: #7dedaa; }
+.wt-delta.down { color: #ff9d9d; }
+.wt-deltasub { color: #9fb6e2; font-weight: 500; font-size: 12px; margin-left: 4px; }
+.wallet-start { text-align: right; display: flex; flex-direction: column; gap: 2px; }
+.wallet-start .ws-l { font-size: 11.5px; color: #9fb6e2; }
+.wallet-start .ws-v { font-family: "Barlow Condensed", sans-serif; font-size: 22px; font-weight: 700; }
+
+.wallet-bar {
+  display: flex; height: 10px; border-radius: 999px; overflow: hidden;
+  background: rgba(255, 255, 255, .12); margin: 14px 0 4px;
+}
+.wallet-bar span { display: block; height: 100%; }
+.wb-cash  { background: #38c172; }
+.wb-bets  { background: #d4a72c; }
+.wb-tbets { background: #8a63e8; }
+.wdot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; }
+
+.wallet-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 12px; }
+.wtile {
+  background: rgba(255, 255, 255, .07); border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 12px; padding: 12px 14px;
+}
+.wtile-cash  { border-color: rgba(56, 193, 114, .5); }
+.wtile-bets  { border-color: rgba(212, 167, 44, .5); }
+.wtile-tbets { border-color: rgba(138, 99, 232, .5); }
+.wtile .wtl { font-size: 12px; color: #c7d6f2; font-weight: 700; }
+.wtile .wtv { font-family: "Barlow Condensed", sans-serif; font-size: 28px; font-weight: 800; margin: 2px 0; }
+.wtile-cash .wtv { color: #7dedaa; }
+.wtile-bets .wtv { color: #ffd977; }
+.wtile-tbets .wtv { color: #c9b4ff; }
+.wtile .wts { font-size: 11.5px; color: #9fb6e2; line-height: 1.45; }
+
+.fiscal-card { border: 1px solid rgba(212, 167, 44, .5); margin-bottom: 18px; }
+.fiscal-rows { margin-top: 8px; }
+.f-row {
+  display: flex; justify-content: space-between; gap: 12px;
+  padding: 7px 2px; border-top: 1px solid var(--line, #e8edf5);
+  font-size: 13.5px; font-variant-numeric: tabular-nums;
+}
+.f-row.f-gain span:last-child { color: var(--green, #1d8a43); font-weight: 700; }
+.f-row.f-loss span:last-child { color: var(--red, #c0392b); font-weight: 700; }
+.f-row.f-tax span:last-child { color: #b8860b; font-weight: 700; }
+.f-row.f-net {
+  border-top: 2px solid #d4a72c; font-weight: 800; font-size: 15px;
+  background: rgba(212, 167, 44, .08); border-radius: 0 0 8px 8px; padding: 10px 6px;
+}
+.f-note { font-size: 12.5px; color: var(--text-dim, #5d6d88); margin: 10px 0 12px; }
+.cl-tax { font-size: 11.5px; color: #b8860b; margin-left: 6px; }
+
+@media (max-width: 640px) {
+  .wallet-tiles { grid-template-columns: 1fr; }
+  .wt-value { font-size: 36px; }
+  .wallet-start { text-align: left; }
+}
+
+/* ============ v19 : mode Hot Points ============ */
+.btn-hot {
+  margin-left: auto;
+  background: linear-gradient(135deg, #d4382c, #e8632c);
+  color: #fff; border: none;
+}
+.btn-hot:hover { filter: brightness(1.1); }
+.btn-hot:disabled { opacity: .45; filter: none; }
+
+.hot-panel {
+  margin: 10px 14px; padding: 12px 14px;
+  border-radius: 12px; border: 2px solid #e8632c;
+  background: linear-gradient(135deg, rgba(212, 56, 44, .10), rgba(232, 99, 44, .06));
+  animation: hotpulse .9s ease-in-out infinite alternate;
+}
+@keyframes hotpulse {
+  from { box-shadow: 0 0 0 rgba(232, 99, 44, .0); }
+  to { box-shadow: 0 0 18px rgba(232, 99, 44, .45); }
+}
+.hot-panel.hot-mp { border-color: #d4a72c; background: linear-gradient(135deg, rgba(212, 167, 44, .14), rgba(232, 99, 44, .06)); }
+.hp-head { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: baseline; margin-bottom: 9px; }
+.hp-kind {
+  font-family: "Barlow Condensed", sans-serif; font-weight: 800;
+  font-size: 19px; letter-spacing: .6px; color: #c0392b;
+}
+.hot-mp .hp-kind { color: #b8860b; }
+.hp-for { color: #1d8a43; } .hp-against { color: #c0392b; }
+.hp-score { font-size: 13px; color: var(--text-dim, #5d6d88); font-variant-numeric: tabular-nums; }
+.hp-serve { flex-basis: 100%; font-size: 13px; font-weight: 700; }
+.hp-options { display: flex; gap: 8px; flex-wrap: wrap; }
+.hp-shot {
+  flex: 1; min-width: 96px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 9px 8px; border-radius: 10px;
+  border: 1.5px solid #d8c2b4; background: #fff;
+  transition: transform .08s, border-color .08s;
+}
+.hp-shot:hover { transform: translateY(-2px); border-color: #e8632c; background: #fff7f2; }
+.hs-ico { font-size: 22px; }
+.hs-name { font-family: "Barlow Condensed", sans-serif; font-weight: 800; font-size: 15px; letter-spacing: .4px; }
+.hs-skill { font-size: 11px; color: var(--text-dim, #5d6d88); }
+.hp-hint { margin-top: 8px; font-size: 11px; color: var(--text-dim, #5d6d88); font-style: italic; }
+
+.com-line.hot-line { color: #c0392b; font-weight: 600; }
+.com-line.hotres-win { color: #1d8a43; }
+.com-line.hotres-loss { color: #c0392b; }
+
+.pcard-hotrow { grid-template-columns: 1fr !important; margin-top: 8px; }
+.pcs-hot { background: linear-gradient(135deg, rgba(212, 56, 44, .10), rgba(232, 99, 44, .05)); border: 1px solid rgba(232, 99, 44, .4); border-radius: 10px; }
+
+@media (max-width: 640px) {
+  .btn-hot { margin-left: 0; width: 100%; }
+  .hp-options { flex-direction: row; }
+  .hp-shot { min-width: 70px; padding: 8px 4px; }
+}
