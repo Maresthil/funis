@@ -36,7 +36,8 @@ document.addEventListener("DOMContentLoaded", () => {
   if (loaded && loaded.betsPlaced) {
     showMain();
   } else if (loaded && loaded.players) {
-    showOnboarding(loaded.players.length >= ROSTER_SIZE + 1 ? "bets" : "player");
+    if (loaded.pendingUpgrade) showOnboarding("upgrade");
+    else showOnboarding(loaded.players.length >= ROSTER_SIZE + 1 ? "bets" : "player");
   } else {
     showOnboarding("roster");
   }
@@ -88,7 +89,7 @@ function showOnboarding(step) {
   box.innerHTML = `
     <div class="onboard-hero">
       <div class="big-logo">FUN<span class="logo-apos">'</span>IS</div>
-      <p>La saison ATP 2026… disputée par 127 légendes de l'Histoire, des mythes et de la fiction —
+      <p>La saison ATP ${(typeof state !== "undefined" && state && state.year) || START_YEAR}… disputée par 127 légendes de l'Histoire, des mythes et de la fiction —
       et par <strong>toi</strong>, le 128<sup>e</sup> joueur.
       Grands Chelems, Masters 1000 et Masters final : à qui la place de n°1 mondial ?</p>
     </div>
@@ -97,7 +98,68 @@ function showOnboarding(step) {
 
   if (step === "roster") renderRosterStep($("#onboard-content"));
   else if (step === "player") renderPlayerStep($("#onboard-content"));
+  else if (step === "upgrade") renderUpgradeStep($("#onboard-content"));
   else renderBetsStep($("#onboard-content"));
+}
+
+/* ---------- Multisaison : ton champion progresse (+3 points) ---------- */
+function renderUpgradeStep(container) {
+  const cp = customPlayer();
+  if (!cp) { renderBetsStep(container); return; }
+  const base = Object.assign({}, cp.sk);
+  const sk = Object.assign({}, cp.sk);
+  const baseTotal = SKILL_KEYS.reduce((s, k) => s + base[k], 0);
+
+  container.innerHTML = `
+    <h2>Saison ${state.year} — ${cp.name} progresse 💪</h2>
+    <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
+      Une saison d'expérience en plus : répartis <strong>${CHAMPION_SEASON_BONUS} nouveaux points</strong>
+      de compétence (chaque compétence reste plafonnée à 10). Le bookmaker recalculera ta cote.</p>
+    <div class="bet-slip" style="max-width:520px">
+      <h3>⚙️ ${baseTotal} points + ${CHAMPION_SEASON_BONUS} à placer</h3>
+      <div class="cp-remaining" id="up-remaining"></div>
+      <div id="up-skills"></div>
+      <div class="fav-actions">
+        <button class="btn btn-gold" id="up-go" disabled>✅ Valider &amp; passer aux paris</button>
+      </div>
+    </div>`;
+
+  const skillsDiv = $("#up-skills");
+  function placed() { return SKILL_KEYS.reduce((s, k) => s + sk[k] - base[k], 0); }
+  function draw() {
+    skillsDiv.innerHTML = "";
+    SKILLS.forEach(s => {
+      const gained = sk[s.key] - base[s.key];
+      const row = document.createElement("div");
+      row.className = "cp-skill-row";
+      row.innerHTML = `
+        <span class="cp-skill-label">${s.label}${gained ? ` <strong style="color:#7dedaa">+${gained}</strong>` : ""}</span>
+        <button class="cp-step" data-k="${s.key}" data-d="-1" ${sk[s.key] <= base[s.key] ? "disabled" : ""}>−</button>
+        <span class="cp-skill-val">${sk[s.key]}</span>
+        <button class="cp-step" data-k="${s.key}" data-d="1" ${sk[s.key] >= 10 || placed() >= CHAMPION_SEASON_BONUS ? "disabled" : ""}>+</button>
+        <span class="cp-skill-bar"><span style="width:${sk[s.key] * 10}%"></span></span>`;
+      skillsDiv.appendChild(row);
+    });
+    skillsDiv.querySelectorAll(".cp-step").forEach(b => b.addEventListener("click", () => {
+      const k = b.dataset.k, d = parseInt(b.dataset.d, 10);
+      if (d > 0 && (sk[k] >= 10 || placed() >= CHAMPION_SEASON_BONUS)) return;
+      if (d < 0 && sk[k] <= base[k]) return;
+      sk[k] += d;
+      draw();
+    }));
+    const rem = CHAMPION_SEASON_BONUS - placed();
+    $("#up-remaining").innerHTML = rem === 0
+      ? `<span style="color:#7dedaa">✓ ${CHAMPION_SEASON_BONUS} points de progression répartis</span>`
+      : `<span style="color:#ffd977">${rem} point${rem > 1 ? "s" : ""} de progression à placer</span>`;
+    $("#up-go").disabled = rem !== 0;
+  }
+  $("#up-go").addEventListener("click", () => {
+    try {
+      improveChampion(sk);
+      renderBetsStep(container);
+    } catch (e) { alert(e.message); }
+  });
+  draw();
 }
 
 function updateBankChip() {
@@ -301,7 +363,9 @@ function drawBetsUI(container) {
       Gain d'un pari = mise × <strong>prize money réel / prize money attendu</strong> du joueur.
       La cote indique le rapport si le joueur réalise une saison moyenne du plateau :
       parier un cador rapporte peu par euro, un outsider peut tout multiplier. 💶
-      Espérance globale : ${fmtEuro(BET_BUDGET)} — à toi de battre le bookmaker.</p>
+      Espérance globale : ${fmtEuro(BET_BUDGET)} — à toi de battre le bookmaker.
+      <strong>Pas obligé de tout miser</strong> : ce que tu ne mises pas reste en cash,
+      pour les paris de tournoi. 🎰</p>
     <div class="bets-layout">
       <div>
         <input class="fav-search" id="bet-search" placeholder="🔍 Rechercher un joueur…">
@@ -399,12 +463,14 @@ function drawBetsUI(container) {
 
   function drawTotal() {
     const total = Array.from(slip.values()).reduce((s, a) => s + a, 0);
-    const ok = slip.size === BET_PLAYERS && total === BET_BUDGET &&
+    const ok = slip.size === BET_PLAYERS && total <= BET_BUDGET &&
       Array.from(slip.values()).every(a => a >= 100) &&
       (!cp || slip.get(cp.id) === CUSTOM_BET);
     const el = $("#slip-total");
     el.className = "bet-total " + (ok ? "ok" : "ko");
-    el.innerHTML = `<span>Total misé</span><span>${fmtEuro(total)} / ${fmtEuro(BET_BUDGET)}</span>`;
+    const cash = BET_BUDGET - total;
+    el.innerHTML = `<span>Total misé</span><span>${fmtEuro(total)} / ${fmtEuro(BET_BUDGET)}</span>` +
+      (ok && cash > 0 ? `<span class="bt-cash">💵 ${fmtEuro(cash)} gardés en cash pour les paris de tournoi</span>` : "");
     $("#bets-go").disabled = !ok;
   }
 
@@ -433,22 +499,60 @@ function drawBetsUI(container) {
    VUE SAISON — calendrier
    ============================================================ */
 function newSeasonConfirm() {
-  if (confirm("Recommencer une nouvelle saison ? La saison en cours sera effacée.")) {
+  if (confirm("Recommencer une nouvelle carrière de zéro ? La carrière en cours (saisons, palmarès, statistiques) sera effacée.")) {
     resetSeason();
     location.reload();
   }
 }
 
+/* Multisaison : enchaîner sur la saison suivante (5 max) */
+function goNextSeason() {
+  const cp = customPlayer();
+  if (!confirm(`Lancer la saison ${state.year + 1} ?\n\nLe plateau retire de nouvelles compétences, la saison démarre avec les classements finaux de ${state.year}` +
+    (cp ? `, et ${cp.name} gagne ${CHAMPION_SEASON_BONUS} points de compétence` : "") +
+    `. Nouveau budget de paris : ${fmtEuro(BET_BUDGET)}.`)) return;
+  try {
+    startNextSeason();
+    showOnboarding(state.pendingUpgrade ? "upgrade" : "bets");
+  } catch (e) { alert(e.message); }
+}
+
 function renderSeason(el) {
+  const seasonOver = state.currentIndex >= CALENDAR.length;
   const head = document.createElement("div");
   head.className = "season-head";
   head.innerHTML = `
     <div>
-      <div class="page-title">Calendrier de la saison 2026</div>
+      <div class="page-title">Calendrier de la saison ${state.year || START_YEAR}
+        <span class="season-badge">Saison ${state.season || 1} / ${MAX_SEASONS}</span></div>
       <div class="page-sub" style="margin-bottom:0">4 Grands Chelems · 9 Masters 1000 · Masters final — de Melbourne à Turin.</div>
     </div>`;
-  head.appendChild(mkBtn("🔄 Nouvelle saison", "btn btn-gold btn-newseason", newSeasonConfirm));
+  if (seasonOver && (state.season || 1) < MAX_SEASONS) {
+    head.appendChild(mkBtn(`▶ Saison ${(state.year || START_YEAR) + 1}`, "btn btn-gold btn-newseason", goNextSeason));
+  } else if (seasonOver) {
+    const fin = document.createElement("span");
+    fin.className = "season-badge career-over";
+    fin.textContent = "🏁 Carrière terminée — " + MAX_SEASONS + " saisons";
+    head.appendChild(fin);
+  }
+  head.appendChild(mkBtn("🔄 Nouvelle carrière", "btn btn-ghost btn-newseason", newSeasonConfirm));
   el.appendChild(head);
+
+  // Palmarès des saisons passées
+  const past = (state.career && state.career.seasons) || [];
+  if (past.length) {
+    const pc = document.createElement("div");
+    pc.className = "card career-card";
+    pc.innerHTML = `<h3>📜 Palmarès de ta carrière</h3>` + past.map(s => `
+      <div class="career-line">
+        <span class="cl-year">${s.year}</span>
+        <span class="cl-body">n°1 : <strong>${s.no1Flag ? flagHTML(s.no1Flag) + " " : ""}${s.no1}</strong>
+          · Masters : ${s.mastersFlag ? flagHTML(s.mastersFlag) + " " : ""}${s.mastersChamp}
+          ${s.cpRank ? `· ton champion n°${s.cpRank}${s.cpTitles ? ` (${s.cpTitles} titre${s.cpTitles > 1 ? "s" : ""})` : ""}` : ""}</span>
+        <span class="cl-bank ${s.bank >= BET_BUDGET ? "up" : "down"}">${fmtEuro(s.bank)}</span>
+      </div>`).join("");
+    el.appendChild(pc);
+  }
 
   const grid = document.createElement("div");
   grid.className = "season-grid";
@@ -481,7 +585,7 @@ function renderSeason(el) {
       <div class="t-top">
         <div>
           <div class="t-name">${t.name}</div>
-          <div class="t-place">${flagHTML(t.country)} ${t.city} · ${t.dates}</div>
+          <div class="t-place">${flagHTML(t.country)} ${t.city} · ${tourneyDates(t)}</div>
         </div>
       </div>
       <div class="t-badges">${catBadge}${surfBadge}
@@ -530,7 +634,7 @@ function renderTournament(el, tid, readOnly) {
     <div>
       <h1>${flagHTML(t.country)} ${t.name}</h1>
       <div class="th-meta">
-        <span>${t.city} · ${t.dates}</span>
+        <span>${t.city} · ${tourneyDates(t)}</span>
         <span class="badge badge-surface-${t.surface}">${t.surfaceLabel}</span>
         <span class="badge badge-m1000" style="background:rgba(255,255,255,.15);color:#fff">${catBadge}</span>
         ${rec.status === "done" ? '<span class="badge badge-done">Terminé</span>' : ""}
@@ -556,8 +660,234 @@ function renderTournament(el, tid, readOnly) {
     actions.appendChild(mkBtn("← Retour", "btn btn-ghost", () => navigate("history")));
   }
 
+  if (!readOnly && rec.status === "active") renderMarketPanel(el, rec);
+
   if (rec.type === "finals") { renderFinalsBody(el, rec, readOnly); return; }
   renderBracketBody(el, rec, readOnly);
+}
+
+/* ============================================================
+   PARIS DE TOURNOI — panneau de marché (ouvert jusqu'au 1er match)
+   ============================================================ */
+function renderMarketPanel(el, rec) {
+  const t = CALENDAR[rec.index];
+  const mk = rec.markets;
+  if (!mk) return;
+  const closed = marketsClosed(rec);
+  const myBets = (state.tbets || []).filter(b => b.tourneyId === rec.id);
+
+  const dopedNote = rec.doped !== undefined && rec.doped !== null
+    ? `<span class="tbet-chip dope-chip">💉 ${getPlayer(rec.doped).name} boosté</span>` : "";
+
+  // Marché fermé : simple rappel de tes paris en cours sur ce tournoi
+  if (closed) {
+    if (myBets.length === 0 && !dopedNote) return;
+    const strip = document.createElement("div");
+    strip.className = "card market-strip";
+    strip.innerHTML = `<strong>🎰 Tes paris sur ce tournoi :</strong> ` + myBets.map(b =>
+      `<span class="tbet-chip">${b.label} · ${fmtEuro(b.stake)} ×${b.odds.toFixed(2)}
+        ${b.status === "won" ? "✅" : b.status === "lost" ? "❌" : "⏳"}</span>`).join(" ") + dopedNote;
+    el.appendChild(strip);
+    return;
+  }
+
+  const panel = document.createElement("div");
+  panel.className = "card market-panel";
+  panel.innerHTML = `
+    <div class="mp-head">
+      <h3>🎰 Les paris du tournoi</h3>
+      <span class="mp-cash">💵 Cash : <strong>${fmtEuro(Math.round(state.cash || 0))}</strong></span>
+      <span class="mp-note">Marché ouvert jusqu'au premier match · cotes calculées sur le tableau réel</span>
+    </div>`;
+
+  /* Les repêchés des qualifications (Masters 1000) */
+  if (rec.qualifiers && rec.qualifiers.length) {
+    const qDiv = document.createElement("div");
+    qDiv.className = "mk-block qual-block";
+    qDiv.innerHTML = `<div class="mk-title">🎟 Repêchés des qualifications (tirage pondéré au-delà du top ${M1000_DIRECT})</div>
+      <div class="mk-row">` + rec.qualifiers.map(pid => {
+        const p = getPlayer(pid);
+        return `<span class="qual-chip"><span class="q-badge">Q</span> ${flagHTML(p.flag)} ${p.name}
+          <span class="qual-rank">n°${currentRank(pid, "points")}</span></span>`;
+      }).join("") + `</div>`;
+    panel.appendChild(qDiv);
+  }
+
+  /* 💉 Encadré dopage : booster un de tes 5 joueurs pour ce tournoi */
+  function dopingBox() {
+    const box = document.createElement("div");
+    box.className = "mk-block doping-block";
+    if (rec.doped !== undefined && rec.doped !== null) {
+      const p = getPlayer(rec.doped);
+      box.innerHTML = `<div class="mk-title">💉 Préparation spéciale</div>
+        <div class="dope-info">💉 <strong>${p.name}</strong> est boosté pour ce tournoi : insensible à la fatigue…
+        mais <strong>5 % de risque de contrôle positif</strong> à l'arrivée (3 mois de suspension) !</div>`;
+      return box;
+    }
+    const n = state.syringes || 0;
+    if (n <= 0) {
+      box.innerHTML = `<div class="mk-title">💉 Préparation spéciale</div>
+        <div class="dope-info">Plus de seringues cette saison.</div>`;
+      return box;
+    }
+    const cands = (state.favorites || []).filter(pid => rec.entrants.includes(pid));
+    if (!cands.length) return null;
+    box.innerHTML = `<div class="mk-title">💉 Préparation spéciale — ${n} seringue${n > 1 ? "s" : ""} restante${n > 1 ? "s" : ""}</div>
+      <div class="dope-info">Booste un de tes 5 joueurs pour ce tournoi : un vrai coup de pouce, zéro fatigue…
+      mais <strong>5 % de risque de contrôle positif</strong> à l'issue du tournoi → 3 mois de suspension.</div>`;
+    const row = document.createElement("div");
+    row.className = "mk-row";
+    cands.forEach(pid => {
+      const p = getPlayer(pid);
+      const b = document.createElement("button");
+      b.className = "mk-chip mk-dope";
+      b.innerHTML = `💉 ${flagHTML(p.flag)} ${p.name}`;
+      b.addEventListener("click", () => {
+        if (!confirm(`Doper ${p.name} pour ${t.name} ?\n\nAvantage pour tout le tournoi et aucune fatigue — mais 5 % de risque de contrôle positif à l'arrivée (3 mois de suspension). Il te restera ${n - 1} seringue${n - 1 > 1 ? "s" : ""}.`)) return;
+        try {
+          applyDoping(rec.id, pid);
+          navigate("tournament", { id: rec.id, section: viewParams.section });
+        } catch (e) { alert(e.message); }
+      });
+      row.appendChild(b);
+    });
+    box.appendChild(row);
+    return box;
+  }
+
+  /* 🎫 Détail des paris déjà placés sur ce tournoi */
+  function placedList() {
+    if (!myBets.length) return null;
+    const box = document.createElement("div");
+    box.className = "mk-block mk-mybets";
+    box.innerHTML = `<div class="mk-title">🎫 Tes paris placés sur ce tournoi</div>`;
+    myBets.forEach(b => {
+      box.insertAdjacentHTML("beforeend", `
+        <div class="tbet-line tbet-open">
+          <span class="tbet-status">⏳</span>
+          <span class="tbet-body">
+            <span class="tbet-label">${b.label}</span>
+            <span class="tbet-meta">mise ${fmtEuro(b.stake)} · cote ×${b.odds.toFixed(2)}</span>
+          </span>
+          <span class="tbet-payout">→ ${fmtEuro(Math.round(b.stake * b.odds))}</span>
+        </div>`);
+    });
+    return box;
+  }
+
+  if ((state.cash || 0) < TBET_MIN && myBets.length === 0) {
+    panel.insertAdjacentHTML("beforeend", `<div class="mp-empty">
+      Il te faut du cash pour parier : va dans <strong>Mes paris</strong> (💶 en haut à droite)
+      et revends un de tes paris de saison (cash-out à 80 %) — ou garde une part
+      des 10 000 € en cash au départ de la prochaine saison.</div>`);
+    const dbEmpty = dopingBox();
+    if (dbEmpty) panel.appendChild(dbEmpty);
+    el.appendChild(panel);
+    return;
+  }
+
+  let selection = null; // {market, pick, odds, label}
+
+  function chip(market, pick, label, odds) {
+    const key = market === "prop" ? "prop:" + pick : market;
+    const taken = myBets.find(b => b.marketKey === key && b.status === "open");
+    const b = document.createElement("button");
+    const placed = !!taken && (market === "prop" || taken.pick === pick);
+    b.className = "mk-chip" + (placed ? " mk-placed" : "");
+    b.disabled = !!taken;
+    b.innerHTML = placed
+      ? `${label} <span class="mk-odds">✔ misé</span>`
+      : `${label} <span class="mk-odds">×${odds.toFixed(2)}</span>`;
+    if (!taken) b.addEventListener("click", () => {
+      selection = { market, pick, odds, label };
+      panel.querySelectorAll(".mk-chip").forEach(c => c.classList.remove("mk-selected"));
+      b.classList.add("mk-selected");
+      updateForm();
+    });
+    return b;
+  }
+
+  function block(title, chips) {
+    if (!chips.length) return;
+    const div = document.createElement("div");
+    div.className = "mk-block";
+    div.innerHTML = `<div class="mk-title">${title}</div>`;
+    const row = document.createElement("div");
+    row.className = "mk-row";
+    chips.forEach(c => row.appendChild(c));
+    div.appendChild(row);
+    panel.appendChild(div);
+  }
+
+  block("🏆 Vainqueur du tournoi", mk.winner.map(w => {
+    const p = getPlayer(w.pid);
+    return chip("winner", w.pid, `${flagHTML(p.flag)} ${p.name}`, w.odds);
+  }));
+  if (mk.run) {
+    const cp = customPlayer();
+    block(`🎾 Le parcours de ${cp.name}`, mk.run.map(r => chip("run", r.k, r.label, r.odds)));
+  }
+  block("🎯 Les défis du bookmaker", mk.props.map(pr => chip("prop", pr.code, pr.label, pr.odds)));
+
+  /* Marchés Over/Under et score fréquent */
+  const frNum = x => String(x).replace(".", ",");
+  if (mk.ouFinal) {
+    block(`📏 Nombre de jeux de la finale — ligne à ${frNum(mk.ouFinal.line)}`, [
+      chip("ouf", "over", `Plus de ${frNum(mk.ouFinal.line)} jeux`, mk.ouFinal.over),
+      chip("ouf", "under", `Moins de ${frNum(mk.ouFinal.line)} jeux`, mk.ouFinal.under),
+    ]);
+  }
+  if (mk.ouHold) {
+    block(`📈 % de jeux de service gagnés sur le tournoi — ligne à ${frNum(mk.ouHold.line)} %`, [
+      chip("ouh", "over", `Plus de ${frNum(mk.ouHold.line)} %`, mk.ouHold.over),
+      chip("ouh", "under", `Moins de ${frNum(mk.ouHold.line)} %`, mk.ouHold.under),
+    ]);
+  }
+  if (mk.topScore) {
+    block("🔢 Le score de set le plus fréquent du tournoi (égalité = gagnant)",
+      mk.topScore.map(s => chip("top", s.key, s.key, s.odds)));
+  }
+
+  /* Formulaire de mise */
+  const form = document.createElement("div");
+  form.className = "mk-form";
+  form.innerHTML = `
+    <span class="mk-sel" id="mk-sel">Choisis un pari ci-dessus…</span>
+    <input type="number" id="mk-stake" min="${TBET_MIN}" step="100" placeholder="Mise €" disabled>
+    <span class="mk-gain" id="mk-gain"></span>`;
+  const betBtn = mkBtn("Parier", "btn btn-sm", () => {
+    try {
+      placeTournamentBet(rec.id, selection.market, selection.pick, $("#mk-stake").value);
+      navigate("tournament", { id: rec.id, section: viewParams.section });
+      updateBankChip();
+    } catch (e) { alert(e.message); }
+  });
+  betBtn.disabled = true;
+  form.appendChild(betBtn);
+  panel.appendChild(form);
+
+  function updateForm() {
+    const sel = $("#mk-sel"), stake = $("#mk-stake"), gain = $("#mk-gain");
+    if (!selection) return;
+    sel.innerHTML = `${selection.label} <span class="mk-odds">×${selection.odds.toFixed(2)}</span>`;
+    stake.disabled = false;
+    if (!stake.value) stake.value = Math.min(Math.max(TBET_MIN, 100), Math.floor((state.cash || 0) / 100) * 100);
+    refreshGain();
+    function refreshGain() {
+      const v = Math.round(Number(stake.value) || 0);
+      const ok = v >= TBET_MIN && v <= (state.cash || 0);
+      betBtn.disabled = !ok;
+      gain.textContent = ok ? "→ gain potentiel " + fmtEuro(Math.round(v * selection.odds)) : "";
+    }
+    stake.oninput = refreshGain;
+  }
+
+  const pl = placedList();
+  if (pl) panel.appendChild(pl);
+  const db = dopingBox();
+  if (db) panel.appendChild(db);
+
+  el.appendChild(panel);
 }
 
 /* ---------- Corps du tableau avec zoom par section ---------- */
@@ -696,7 +1026,9 @@ function matchRow(rec, m, pid, isP1) {
   const row = document.createElement("div");
   if (pid === null) {
     row.className = "b-row";
-    row.innerHTML = `<span class="tbd">À déterminer…</span>`;
+    row.innerHTML = m.walkover
+      ? `<span class="tbd">Exempt (bye) — joueur suspendu 💊</span>`
+      : `<span class="tbd">À déterminer…</span>`;
     return row;
   }
   const p = getPlayer(pid);
@@ -704,13 +1036,22 @@ function matchRow(rec, m, pid, isP1) {
   const isLoser = m.winner !== null && m.winner !== pid;
   row.className = "b-row" + (isWinner ? " winner-row" : "") + (isLoser ? " loser-row" : "");
   const seed = rec.seedsMap[pid] ? `<span class="seed">${rec.seedsMap[pid]}</span>` : `<span class="seed"></span>`;
+  const qBadge = (rec.qualifiers || []).includes(pid) ? `<span class="q-badge" title="Repêché des qualifications">Q</span>` : "";
   const fav = state.favorites.includes(pid) ? `<span class="fav-star">⭐</span>` : "";
+  // Icône de forme : celle du match s'il est joué, la forme actuelle sinon
+  const fState = m.winner !== null
+    ? (isP1 ? m.form1 : m.form2)
+    : (rec.status === "active" ? formStatus(pid, rec) : null);
+  const fIcon = fState && FORM_META[fState]
+    ? `<span class="form-ico" title="${FORM_META[fState].label}">${FORM_META[fState].icon}</span>` : "";
   let score = "";
   if (m.score) {
     score = m.score.map(s => (isP1 ? s[0] : s[1])).join(" ");
+  } else if (m.walkover && m.winner === pid) {
+    score = "bye";
   }
   row.innerHTML = `${seed}<span class="p-flag">${flagHTML(p.flag)}</span>
-    <span class="p-name">${p.name}${isWinner ? " ✓" : ""}</span>${fav}
+    <span class="p-name">${p.name}${qBadge}${isWinner ? " ✓" : ""}</span>${fIcon}${fav}
     <span class="p-score">${score}</span>`;
   if (m.winner !== null) {
     row.classList.add("row-clickable");
@@ -941,6 +1282,7 @@ function openMatchModal(rec, ctx) {
   if (!res) return;
 
   const pA = getPlayer(m.p1), pB = getPlayer(m.p2);
+  const fmIco = f => f && FORM_META[f] ? `<span class="form-ico" title="${FORM_META[f].label}">${FORM_META[f].icon}</span>` : "";
   const isFinalMatch = ctx.kind === "final" || (ctx.kind === "bracket" && rec.rounds && ctx.roundIdx === rec.rounds.length - 1);
   const bestOf = t.bestOf;
   const maxSets = bestOf;
@@ -961,8 +1303,8 @@ function openMatchModal(rec, ctx) {
         <span class="sb-flag">${flagHTML(pA.flag)}</span>
         <span>
           <span class="sb-name">${rec.seedsMap[m.p1] ? `<span class="seed">[${rec.seedsMap[m.p1]}]</span>` : ""}<span class="name-link" id="link-A" title="Voir la carte de ${pA.name}">${pA.name}</span>
-            ${state.favorites.includes(m.p1) ? "💶" : ""}<span class="serve-dot hidden" id="serve-A"></span></span>
-          <span class="sb-cat">n°${currentRank(m.p1, "points")} à la race · ${pA.cat}</span>
+            ${fmIco(m.form1)}${state.favorites.includes(m.p1) ? "💶" : ""}<span class="serve-dot hidden" id="serve-A"></span></span>
+          <span class="sb-cat">n°${currentRank(m.p1, "points")} à la race · ${pA.cat}${m.form1 && FORM_META[m.form1] ? " · " + FORM_META[m.form1].label : ""}</span>
         </span>
         <span class="sb-sets" id="sets-A"></span>
       </div>
@@ -971,8 +1313,8 @@ function openMatchModal(rec, ctx) {
         <span class="sb-flag">${flagHTML(pB.flag)}</span>
         <span>
           <span class="sb-name">${rec.seedsMap[m.p2] ? `<span class="seed">[${rec.seedsMap[m.p2]}]</span>` : ""}<span class="name-link" id="link-B" title="Voir la carte de ${pB.name}">${pB.name}</span>
-            ${state.favorites.includes(m.p2) ? "💶" : ""}<span class="serve-dot hidden" id="serve-B"></span></span>
-          <span class="sb-cat">n°${currentRank(m.p2, "points")} à la race · ${pB.cat}</span>
+            ${fmIco(m.form2)}${state.favorites.includes(m.p2) ? "💶" : ""}<span class="serve-dot hidden" id="serve-B"></span></span>
+          <span class="sb-cat">n°${currentRank(m.p2, "points")} à la race · ${pB.cat}${m.form2 && FORM_META[m.form2] ? " · " + FORM_META[m.form2].label : ""}</span>
         </span>
         <span class="sb-sets" id="sets-B"></span>
       </div>
@@ -1243,6 +1585,12 @@ function renderRecap(el, tid) {
     const tr = document.createElement("tr");
     tr.className = "row-clickable";
     tr.addEventListener("click", () => openPlayerCard(bet.pid));
+    if (bet.sold && bet.sold.atIndex <= rec.index) {
+      tr.innerHTML = `<td><div class="player-cell"><span class="pc-flag">${flagHTML(p.flag)}</span><span>${p.name}</span></div></td>
+        <td colspan="3" style="color:#b8860b">💰 Pari revendu au bookmaker</td>`;
+      favB.appendChild(tr);
+      return;
+    }
     if (r) {
       const label = r.round === "W" ? "🏆 Vainqueur" : r.round === "F" ? "Finaliste"
         : rec.type === "finals" ? (r.round === "SF" ? "Demi-finaliste" : `${r.rrWins} v. en poule`)
@@ -1263,6 +1611,37 @@ function renderRecap(el, tid) {
   right.insertAdjacentHTML("beforeend", `<p style="font-size:13px;margin-top:8px">
     Cagnotte : <strong>+${fmtEuro(Math.round(recapGain))}</strong> sur ce tournoi ·
     solde total : <strong>${fmtEuro(Math.round(bankNow()))}</strong></p>`);
+
+  /* Résultats des paris de tournoi */
+  const tbets = (rec.recap.tbets || []);
+  if (tbets.length) {
+    const net = tbets.reduce((s, b) => s + (b.payout || 0) - b.stake, 0);
+    right.insertAdjacentHTML("beforeend", `<h3 style="margin-top:14px">🎰 Tes paris du tournoi</h3>`);
+    tbets.forEach(b => {
+      right.insertAdjacentHTML("beforeend", `
+        <div class="tbet-line tbet-${b.status}">
+          <span class="tbet-status">${b.status === "won" ? "✅" : "❌"}</span>
+          <span class="tbet-body">
+            <span class="tbet-label">${b.label}</span>
+            <span class="tbet-meta">mise ${fmtEuro(b.stake)} · cote ×${b.odds.toFixed(2)}</span>
+            ${b.result ? `<span class="tbet-result">→ ${b.result}</span>` : ""}
+          </span>
+          <span class="tbet-payout">${b.status === "won" ? "+" + fmtEuro(b.payout) : "−" + fmtEuro(b.stake)}</span>
+        </div>`);
+    });
+    right.insertAdjacentHTML("beforeend", `<p style="font-size:13px;margin-top:6px">
+      Bilan des paris de tournoi : <strong style="color:${net >= 0 ? "var(--green)" : "var(--red)"}">${net >= 0 ? "+" : "−"}${fmtEuro(Math.abs(net))}</strong></p>`);
+  }
+
+  /* Contrôle antidopage */
+  if (rec.doped !== undefined && rec.doped !== null) {
+    const dp = getPlayer(rec.doped);
+    right.insertAdjacentHTML("beforeend", rec.dopingControl
+      ? `<div class="dope-result dope-positive">🚨 <strong>Contrôle antidopage positif !</strong>
+          ${flagHTML(dp.flag)} ${dp.name} est contrôlé à l'issue du tournoi… et suspendu <strong>3 mois</strong>.</div>`
+      : `<div class="dope-result dope-negative">💉 ${flagHTML(dp.flag)} ${dp.name} était boosté —
+          contrôle antidopage <strong>négatif</strong>, personne n'a rien vu. 😮‍💨</div>`);
+  }
 
   /* Nouveaux n°1 */
   const leaders = sortedByPoints();
@@ -1288,6 +1667,8 @@ function renderRecap(el, tid) {
     }));
   } else {
     actions.appendChild(mkBtn("🏆 Bilan final de la saison", "btn btn-gold", () => navigate("rankings")));
+    if ((state.season || 1) < MAX_SEASONS)
+      actions.appendChild(mkBtn(`▶ Saison ${(state.year || START_YEAR) + 1}`, "btn", goNextSeason));
   }
   el.appendChild(actions);
 }
@@ -1297,7 +1678,7 @@ function renderRecap(el, tid) {
    ============================================================ */
 function renderRankings(el, tab) {
   el.insertAdjacentHTML("beforeend", `
-    <div class="page-title">Classements 2026</div>
+    <div class="page-title">Classements ${state.year || START_YEAR}</div>
     <div class="page-sub">Race ATP et prize money — l'évolution est calculée par rapport au tournoi précédent.
       <span class="cut-note">— — ligne dorée : qualification (top 64 Masters 1000 / top 8 Masters)</span></div>`);
 
@@ -1392,10 +1773,11 @@ function renderHistory(el) {
    STATISTIQUES DE LA SAISON
    ============================================================ */
 function renderStats(el) {
+  const multiSeason = state.career && state.career.seasons && state.career.seasons.length > 0;
   el.insertAdjacentHTML("beforeend", `
-    <div class="page-title">Statistiques de la saison</div>
+    <div class="page-title">Statistiques${multiSeason ? " de la carrière" : " de la saison"}</div>
     <div class="page-sub">Les leaders du circuit dans chaque domaine, les rois de chaque surface,
-      et l'anatomie des matchs de la saison.</div>`);
+      et l'anatomie des matchs${multiSeason ? " — cumulés sur toutes les saisons depuis " + START_YEAR : " de la saison"}.</div>`);
 
   const done = CALENDAR.some(t => state.tournaments[t.id] && state.tournaments[t.id].status === "done");
   if (!done) {
@@ -1549,7 +1931,7 @@ function renderStats(el) {
           <span class="ex-games">${r.games}<small>jeux</small></span>
           <span class="ex-body">
             <span class="ex-players">${flagHTML(w.flag)} <strong>${w.name}</strong> bat ${flagHTML(l.flag)} ${l.name}</span>
-            <span class="ex-detail">${formatScore(r.m, true)} · ${flagHTML(t.country)} ${t.city}</span>
+            <span class="ex-detail">${formatScore(r.m, true)} · ${flagHTML(t.country)} ${t.city}${(state.career && state.career.seasons.length && r.year) ? " " + r.year : ""}</span>
           </span>`;
         line.addEventListener("click", () => openPlayerCard(r.m.winner));
         card.appendChild(line);
@@ -1745,31 +2127,24 @@ function renderFavorites(el) {
   hero.innerHTML = `
     <div class="bh-main">
       <div class="v">${fmtEuro(Math.round(bank))}</div>
-      <div class="l">${seasonOver ? "Solde final" : "Valeur actuelle de tes paris"}</div>
+      <div class="l">${seasonOver ? "Solde final" : "Valeur totale (paris + cash)"}</div>
     </div>
     <div>
       <div class="bh-delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲ +" : "▼ "}${fmtEuro(Math.round(delta))}</div>
       <div class="bh-sub">${seasonOver ? "par rapport à ta mise de " + fmtEuro(BET_BUDGET)
         : "par rapport au rythme attendu (" + fmtEuro(Math.round(expectedNow)) + " à ce stade)"}</div>
     </div>
+    <div class="bh-main bh-cash">
+      <div class="v">${fmtEuro(Math.round(state.cash || 0))}</div>
+      <div class="l">💵 Cash disponible</div>
+      <div class="l">💉 ${state.syringes || 0} seringue${(state.syringes || 0) > 1 ? "s" : ""} restante${(state.syringes || 0) > 1 ? "s" : ""}</div>
+    </div>
     <div>
       <div class="bh-sub">Mise initiale : <strong style="color:#fff">${fmtEuro(BET_BUDGET)}</strong> sur 5 joueurs<br>
       ${seasonOver ? (delta >= 0 ? "🍾 Tu as battu le bookmaker !" : "😅 Le bookmaker gagne cette fois…")
-        : (CALENDAR.length - state.currentIndex) + " tournoi(s) restant(s)"}</div>
+        : "Le cash s'obtient en revendant un pari (cash-out à 80 %)<br>et sert aux paris de tournoi 🎰"}</div>
     </div>`;
   el.appendChild(hero);
-
-  /* Courbe d'évolution */
-  const chartCard = document.createElement("div");
-  chartCard.className = "card bank-chart-card";
-  chartCard.innerHTML = `<h3>📈 Évolution du solde</h3>`;
-  chartCard.appendChild(buildBankChart(bankHistory(), pace));
-  chartCard.insertAdjacentHTML("beforeend", `
-    <div class="chart-legend">
-      <span><span class="dot" style="background:var(--blue)"></span>Valeur de tes paris</span>
-      <span><span class="dot" style="background:#b9c5d8"></span>Rythme attendu (espérance ${fmtEuro(BET_BUDGET)})</span>
-    </div>`);
-  el.appendChild(chartCard);
 
   /* Détail des paris : une carte par pari (lisible aussi sur mobile) */
   const tableCard = document.createElement("div");
@@ -1784,19 +2159,24 @@ function renderFavorites(el) {
     const expectedBet = bet.amount * paceShare;
     const diff = value - (seasonOver ? bet.amount : expectedBet);
     const bc = document.createElement("div");
-    bc.className = "bet-card row-clickable";
-    bc.title = "Voir la carte de " + p.name;
+    bc.className = "bet-card" + (bet.sold ? " bet-sold" : "");
     bc.innerHTML = `
       <div class="bc-head">
-        <span class="bc-flag">${flagHTML(p.flag)}</span>
-        <span class="bc-id">
+        <span class="bc-flag row-clickable bc-open">${flagHTML(p.flag)}</span>
+        <span class="bc-id row-clickable bc-open" title="Voir la carte de ${p.name}">
           <span class="bc-name">${p.name}${p.custom ? " 🎾" : ""}</span>
-          <span class="bc-cat">${p.cat} · <span class="odds-badge">×${betOdds(bet.pid).toFixed(2)}</span></span>
+          <span class="bc-cat">${p.cat} · <span class="odds-badge">×${betOdds(bet.pid).toFixed(2)}</span>${
+            (state.suspended && state.suspended[bet.pid] !== undefined && state.currentIndex < CALENDAR.length &&
+             CALENDAR[state.currentIndex].month < state.suspended[bet.pid])
+              ? ' · <span class="susp-badge">🚨 Suspendu (dopage)</span>' : ""}</span>
         </span>
-        <span class="bc-value">
-          <span class="v">${fmtEuro(Math.round(value))}</span>
-          <span class="rk-move ${diff >= 0 ? "up" : "down"}">${diff >= 0 ? "▲" : "▼"} ${fmtEuro(Math.abs(Math.round(diff)))}</span>
-        </span>
+        ${bet.sold
+          ? `<span class="bc-value"><span class="v" style="color:var(--text-dim)">${fmtEuro(bet.sold.price)}</span>
+             <span class="sold-badge">💰 Vendu avant ${CALENDAR[Math.min(bet.sold.atIndex, CALENDAR.length - 1)].city}</span></span>`
+          : `<span class="bc-value">
+             <span class="v">${fmtEuro(Math.round(value))}</span>
+             <span class="rk-move ${diff >= 0 ? "up" : "down"}">${diff >= 0 ? "▲" : "▼"} ${fmtEuro(Math.abs(Math.round(diff)))}</span>
+           </span>`}
       </div>
       <div class="bc-grid">
         <div class="bc-stat"><span class="l">Mise</span><span class="v">${fmtEuro(bet.amount)}</span></div>
@@ -1804,11 +2184,59 @@ function renderFavorites(el) {
         <div class="bc-stat"><span class="l">Prize réel</span><span class="v">${fmtEuro(state.money[bet.pid] || 0)}</span></div>
         <div class="bc-stat bc-last"><span class="l">Dernier résultat</span><span class="v">${lastResultLabel(bet.pid)}</span></div>
       </div>`;
-    bc.addEventListener("click", () => openPlayerCard(bet.pid));
+    bc.querySelectorAll(".bc-open").forEach(e => e.addEventListener("click", () => openPlayerCard(bet.pid)));
+    // Cash-out : revente au bookmaker à 80 % de la juste valeur
+    if (!bet.sold && !seasonOver) {
+      const foot = document.createElement("div");
+      foot.className = "bc-foot";
+      if (p.custom) {
+        foot.innerHTML = `<span class="bc-lock">🔒 Le pari sur ton champion est incessible</span>`;
+      } else {
+        const q = cashOutQuote(bet);
+        foot.appendChild(mkBtn(`💰 Cash-out ${fmtEuro(q.price)}`, "btn btn-ghost btn-sm", () => {
+          if (confirm(`Revendre ce pari sur ${p.name} pour ${fmtEuro(q.price)} ?\n` +
+            `(${fmtEuro(Math.round(q.acquired))} acquis + ${fmtEuro(Math.round(q.expectedRemaining))} attendus, commission 20 %)\n` +
+            `Le pari ne rapportera plus rien ensuite.`)) {
+            try { cashOutBet(bet.pid); navigate("favorites"); } catch (e) { alert(e.message); }
+          }
+        }));
+        foot.insertAdjacentHTML("beforeend",
+          `<span class="bc-lock">acquis ${fmtEuro(Math.round(q.acquired))} + attendu ${fmtEuro(Math.round(q.expectedRemaining))} − 20 %</span>`);
+      }
+      bc.appendChild(foot);
+    }
     list.appendChild(bc);
   });
   tableCard.appendChild(list);
   el.appendChild(tableCard);
+
+  /* Historique des paris de tournoi */
+  const tb = state.tbets || [];
+  if (tb.length) {
+    const tCard = document.createElement("div");
+    tCard.className = "card bets-table-card";
+    const staked = tb.reduce((s, b) => s + b.stake, 0);
+    const won = tb.reduce((s, b) => s + (b.payout || 0), 0);
+    tCard.innerHTML = `<h3>🎰 Tes paris de tournoi
+      <span class="tbet-summary">${fmtEuro(staked)} misés · ${fmtEuro(won)} encaissés</span></h3>`;
+    tb.slice().reverse().forEach(b => {
+      const t = CALENDAR.find(c => c.id === b.tourneyId);
+      const line = document.createElement("div");
+      line.className = "tbet-line tbet-" + b.status;
+      line.innerHTML = `
+        <span class="tbet-status">${b.status === "open" ? "⏳" : b.status === "won" ? "✅" : "❌"}</span>
+        <span class="tbet-body">
+          <span class="tbet-label">${b.label}</span>
+          <span class="tbet-meta">${flagHTML(t.country)} ${t.city}${b.year ? " " + b.year : ""} · mise ${fmtEuro(b.stake)} · cote ×${b.odds.toFixed(2)}</span>
+          ${b.result ? `<span class="tbet-result">→ ${b.result}</span>` : ""}
+        </span>
+        <span class="tbet-payout">${b.status === "won" ? "+" + fmtEuro(b.payout)
+          : b.status === "lost" ? "−" + fmtEuro(b.stake)
+          : "gain potentiel " + fmtEuro(Math.round(b.stake * b.odds))}</span>`;
+      tCard.appendChild(line);
+    });
+    el.appendChild(tCard);
+  }
 }
 
 function lastResultLabel(pid) {
@@ -1826,39 +2254,3 @@ function lastResultLabel(pid) {
   return "—";
 }
 
-/* Graphique SVG : solde après chaque tournoi + ligne du rythme attendu */
-function buildBankChart(series, pace) {
-  const W = 680, H = 240, padL = 62, padR = 16, padT = 14, padB = 34;
-  const n = Math.max(series.length, 2);
-  const maxV = Math.max(BET_BUDGET * 1.15, ...series.map(d => d.value), ...pace.map(d => d.value)) * 1.08;
-  const x = i => padL + (W - padL - padR) * (i / (n - 1));
-  const y = v => padT + (H - padT - padB) * (1 - v / maxV);
-  const pts = arr => arr.map((d, i) => `${x(i).toFixed(1)},${y(d.value).toFixed(1)}`).join(" ");
-
-  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  let gridLines = "";
-  for (let g = 0; g <= 4; g++) {
-    const v = maxV * g / 4;
-    gridLines += `<line x1="${padL}" y1="${y(v)}" x2="${W - padR}" y2="${y(v)}" stroke="#e7edf6" stroke-width="1"/>
-      <text x="${padL - 8}" y="${y(v) + 4}" text-anchor="end" font-size="10" fill="#8896ad">${Math.round(v / 1000)} k€</text>`;
-  }
-  const labels = series.map((d, i) =>
-    `<text x="${x(i)}" y="${H - 8}" text-anchor="middle" font-size="9" fill="#8896ad">${d.label.slice(0, 9)}</text>`
-  ).join("");
-  const area = series.length > 1
-    ? `<polygon points="${x(0)},${y(0)} ${pts(series)} ${x(series.length - 1)},${y(0)}" fill="rgba(36,120,255,.09)"/>` : "";
-  const dots = series.map((d, i) =>
-    `<circle cx="${x(i)}" cy="${y(d.value)}" r="3.4" fill="#2478ff" stroke="#fff" stroke-width="1.4"><title>${d.label} : ${Math.round(d.value).toLocaleString("fr-FR")} €</title></circle>`
-  ).join("");
-  svg.innerHTML = `
-    ${gridLines}
-    <line x1="${padL}" y1="${y(BET_BUDGET)}" x2="${W - padR}" y2="${y(BET_BUDGET)}" stroke="#d4a72c" stroke-width="1" stroke-dasharray="2 4"/>
-    <text x="${W - padR}" y="${y(BET_BUDGET) - 5}" text-anchor="end" font-size="9.5" fill="#b8860b">mise 10 k€</text>
-    ${pace.length > 1 ? `<polyline points="${pts(pace)}" fill="none" stroke="#b9c5d8" stroke-width="2" stroke-dasharray="5 5"/>` : ""}
-    ${area}
-    ${series.length > 1 ? `<polyline points="${pts(series)}" fill="none" stroke="#2478ff" stroke-width="2.6" stroke-linejoin="round"/>` : ""}
-    ${dots}
-    ${labels}`;
-  return svg;
-}
