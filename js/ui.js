@@ -28,6 +28,12 @@ function flagHTML(e) {
 let currentView = "season";
 let viewParams = {};
 
+/* Le nom de TON CLUB (saisi à la création du champion) */
+function clubName() {
+  const cp = customPlayer();
+  return (cp && cp.club) ? cp.club : "ton club";
+}
+
 /* ============================================================
    DÉMARRAGE
    ============================================================ */
@@ -38,7 +44,7 @@ document.addEventListener("DOMContentLoaded", () => {
   } else if (loaded && loaded.players) {
     if (loaded.pendingUpgrade) showOnboarding("upgrade");
     else if (loaded.players.length < ROSTER_SIZE + 1) showOnboarding("player");
-    else showOnboarding((loaded.favorites || []).length === BET_PLAYERS ? "bets" : "favorites");
+    else showOnboarding("favorites");
   } else {
     showOnboarding("roster");
   }
@@ -90,9 +96,15 @@ function showOnboarding(step) {
   box.innerHTML = `
     <div class="onboard-hero">
       <div class="big-logo">FUN<span class="logo-apos">'</span>IS</div>
-      <p>La saison ATP ${(typeof state !== "undefined" && state && state.year) || START_YEAR}… disputée par 127 légendes de l'Histoire, des mythes et de la fiction —
-      et par <strong>toi</strong>, le 128<sup>e</sup> joueur.
-      Grands Chelems, Masters 1000 et Masters final : à qui la place de n°1 mondial ?</p>
+      <p>La saison ATP ${(typeof state !== "undefined" && state && state.year) || START_YEAR}… disputée par <strong>127 légendes</strong> de l'Histoire,
+      des mythes et de la fiction — et par <strong>toi</strong>, le 128<sup>e</sup> joueur.</p>
+      <div class="oh-points">
+        <span>🎾 <strong>Crée ton champion</strong> sur mesure, recrute les <strong>4 joueurs de ton club</strong> et joue leurs matchs à la main</span>
+        <span>🏆 4 Grands Chelems, 9 Masters 1000 et le Masters final — <strong>5 saisons</strong> pour décrocher la place de n°1 mondial</span>
+        <span>🎰 Parie comme un pro sur <strong>FUN'BET</strong> : vainqueurs, combinés aux cotes multipliées, scores exacts, aces, tie-breaks…</span>
+        <span>🏦 Gère ta banque en direct : prize money taxé à <strong>40 %</strong>, <strong>20 %</strong> pour le staff, <strong>500 000 €</strong> de frais par saison</span>
+        <span>💉 Dope tes joueurs pour un coup de pouce… à 10 000 € la dose et 5 % de risque de suspension</span>
+      </div>
     </div>
     <div class="onboard-card" id="onboard-content"></div>`;
   el.appendChild(box);
@@ -100,31 +112,30 @@ function showOnboarding(step) {
   if (step === "roster") renderRosterStep($("#onboard-content"));
   else if (step === "player") renderPlayerStep($("#onboard-content"));
   else if (step === "upgrade") renderUpgradeStep($("#onboard-content"));
-  else if (step === "favorites") renderFavoritesStep($("#onboard-content"));
-  else renderBetsStep($("#onboard-content"));
+  else renderFavoritesStep($("#onboard-content"));
 }
 
-/* ---------- Étape 3 : choisis tes 5 favoris (ton champion + 4) ----------
-   Les favoris sont les joueurs que tu SUIS : leurs matchs se jouent à la main
-   et eux seuls peuvent être dopés. Ils sont indépendants de tes paris. */
+/* ---------- Étape 3 : recrute les 4 joueurs de TON CLUB ----------
+   Ton champion en est le capitaine. Tu SUIS les joueurs du club : leurs matchs
+   se jouent à la main et eux seuls peuvent être dopés. */
 function renderFavoritesStep(container) {
   const cp = customPlayer();
   const picked = new Set((state.favorites || []).filter(pid => !cp || pid !== cp.id));
   const need = BET_PLAYERS - (cp ? 1 : 0);
 
   container.innerHTML = `
-    <h2>3 · Choisis tes ${BET_PLAYERS} favoris ⭐</h2>
+    <h2>3 · Recrute les 4 joueurs de ${clubName()} 🎾</h2>
     <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
-      Tes favoris sont les joueurs que tu <strong>suis</strong> toute la saison : leurs matchs se jouent
-      à la main (« Simuler le tournoi » s'arrête sur chacun) et eux seuls peuvent être dopés 💉.
-      ${cp ? `<strong>${cp.name}</strong> en fait forcément partie — choisis-en <strong>${need}</strong> autres.` : ""}
-      Tu n'es <strong>pas obligé</strong> de miser sur eux : les paris viennent après, librement.</p>
-    ${cp ? `<div class="fav-locked">⭐ ${flagHTML(cp.flag)} <strong>${cp.name}</strong> — ton champion, favori d'office 🔒</div>` : ""}
+      Ton club aligne <strong>${BET_PLAYERS} joueurs</strong> sur le circuit : ${cp ? `<strong>${cp.name}</strong>, ton champion et capitaine,` : "ton champion"}
+      plus <strong>${need} recrues</strong> à choisir parmi les légendes. Tu <strong>suis</strong> les joueurs du club toute la saison :
+      leurs matchs se jouent à la main (« Simuler le tournoi » s'arrête sur chacun) et eux seuls peuvent être dopés 💉.
+      Les paris 🎰 se placent ensuite en direct : avant chaque tournoi, chaque tour et chaque match.</p>
+    ${cp ? `<div class="fav-locked">⭐ ${flagHTML(cp.flag)} <strong>${cp.name}</strong> — capitaine de ${clubName()} 🔒</div>` : ""}
     <input class="fav-search" id="fav-search" placeholder="🔍 Rechercher un joueur…">
     <div class="fav-grid" id="fav-grid" style="max-height:420px"></div>
     <div class="fav-actions">
       <span class="cp-remaining" id="fav-remaining"></span>
-      <button class="btn btn-gold" id="fav-go" disabled>💶 Continuer vers les paris</button>
+      <button class="btn btn-gold" id="fav-go" disabled>🎾 Lancer la saison</button>
     </div>`;
 
   const grid = $("#fav-grid");
@@ -157,15 +168,15 @@ function renderFavoritesStep(container) {
     drawGrid($("#fav-search").value);
     const rem = need - picked.size;
     $("#fav-remaining").innerHTML = rem === 0
-      ? `<span style="color:#7dedaa">✓ ${BET_PLAYERS} favoris choisis</span>`
-      : `<span style="color:#ffd977">Encore ${rem} favori${rem > 1 ? "s" : ""} à choisir</span>`;
+      ? `<span style="color:#7dedaa">✓ ${clubName()} est au complet (${BET_PLAYERS} joueurs)</span>`
+      : `<span style="color:#ffd977">Encore ${rem} joueur${rem > 1 ? "s" : ""} à recruter</span>`;
     $("#fav-go").disabled = rem !== 0;
   }
   $("#fav-search").addEventListener("input", e => drawGrid(e.target.value));
   $("#fav-go").addEventListener("click", () => {
     try {
       setFavorites((cp ? [cp.id] : []).concat(Array.from(picked)));
-      renderBetsStep(container);
+      showMain();
     } catch (e) { alert(e.message); }
   });
   refresh();
@@ -174,7 +185,7 @@ function renderFavoritesStep(container) {
 /* ---------- Multisaison : ton champion progresse (+3 points) ---------- */
 function renderUpgradeStep(container) {
   const cp = customPlayer();
-  if (!cp) { renderBetsStep(container); return; }
+  if (!cp) { renderFavoritesStep(container); return; }
   const base = Object.assign({}, cp.sk);
   const sk = Object.assign({}, cp.sk);
   const baseTotal = SKILL_KEYS.reduce((s, k) => s + base[k], 0);
@@ -183,13 +194,13 @@ function renderUpgradeStep(container) {
     <h2>Saison ${state.year} — ${cp.name} progresse 💪</h2>
     <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
       Une saison d'expérience en plus : répartis <strong>${CHAMPION_SEASON_BONUS} nouveaux points</strong>
-      de compétence (chaque compétence reste plafonnée à 10). Le bookmaker recalculera ta cote.</p>
+      de compétence (chaque compétence reste plafonnée à 10).</p>
     <div class="bet-slip" style="max-width:520px">
       <h3>⚙️ ${baseTotal} points + ${CHAMPION_SEASON_BONUS} à placer</h3>
       <div class="cp-remaining" id="up-remaining"></div>
       <div id="up-skills"></div>
       <div class="fav-actions">
-        <button class="btn btn-gold" id="up-go" disabled>✅ Valider &amp; passer aux paris</button>
+        <button class="btn btn-gold" id="up-go" disabled>✅ Valider &amp; recruter mon club</button>
       </div>
     </div>`;
 
@@ -231,16 +242,16 @@ function renderUpgradeStep(container) {
   draw();
 }
 
+/* Le bouton en haut à droite = SOLDE BANCAIRE en direct (vert si au-dessus
+   du capital de départ, rouge en dessous). Clic : écran banque. */
 function updateBankChip() {
   const chip = $("#bank-chip");
   if (!state || !state.betsPlaced) { chip.classList.add("hidden"); return; }
   chip.classList.remove("hidden");
-  const bank = bankNow();
-  const pace = expectedBankPace();
-  const expected = pace[pace.length - 1].value;
-  chip.textContent = "💶 " + fmtEuro(Math.round(bank));
-  chip.classList.toggle("up", bank > expected + 1);
-  chip.classList.toggle("down", bank < expected - 1);
+  const cash = Math.round(state.cash || 0);
+  chip.textContent = "💶 " + fmtEuro(cash);
+  chip.classList.toggle("up", cash > (state.bankroll || 0));
+  chip.classList.toggle("down", cash < (state.bankroll || 0));
 }
 
 function renderRosterStep(container) {
@@ -340,8 +351,7 @@ function renderPlayerStep(container) {
     <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
       Tu entres sur le circuit avec <strong>${TARGET} points</strong> de compétences — la moyenne
       du plateau, ni plus ni moins. Ton avantage : un profil <strong>sur mesure</strong>, chacune de 1 à 10
-      (et +${CHAMPION_SEASON_BONUS} points par saison en mode carrière).
-      Un pari de ${fmtEuro(CUSTOM_BET)} sera automatiquement placé sur toi — le bookmaker ajustera ta cote. 🎾</p>
+      (et +${CHAMPION_SEASON_BONUS} points par saison en mode carrière). À toi la gloire… et la banque 🏦</p>
     <div class="create-layout">
       <div>
         <label class="cp-label">Prénom</label>
@@ -414,147 +424,331 @@ function renderPlayerStep(container) {
   draw(); update();
 }
 
-function renderBetsStep(container) {
-  container.innerHTML = `
-    <h2>4 · Place tes paris — capital : ${fmtEuro(state.bankroll)}</h2>
-    <div class="odds-loading"><span class="spin">🎾</span><br>
-      Le bookmaker simule ${ODDS_SIMS} saisons complètes pour calculer les cotes…</div>`;
-  setTimeout(() => {
-    ensureRefs();
-    drawBetsUI(container);
-  }, 60);
+/* ============================================================
+   PARIS v22 — helpers partagés
+   ============================================================ */
+function ctxRef(ctx) {
+  if (ctx.kind === "bracket") return { k: "b", r: ctx.roundIdx, i: ctx.matchIdx };
+  if (ctx.kind === "rr") return { k: "rr", g: ctx.group, i: ctx.matchIdx };
+  if (ctx.kind === "sf") return { k: "sf", i: ctx.matchIdx };
+  return { k: "f" };
+}
+function betsOnRef(rec, ref) {
+  const key = refKey(ref);
+  return (state.tbets || []).filter(b => (b.kind === "round" || b.kind === "match") &&
+    b.tourneyId === rec.id && b.legs.some(l => refKey(l.ref) === key));
+}
+/* Ligne d'un pari (utilisée partout : panneau, banque, récap, modal) */
+function tbetLineHTML(b, noTourney) {
+  const t = CALENDAR.find(c => c.id === b.tourneyId);
+  const ico = b.status === "open" ? "⏳" : b.status === "won" ? "✅" : "❌";
+  const legs = (b.legs && b.legs.length > 1)
+    ? `<span class="tbet-legs">${b.legs.map(l => `• ${l.label} <em>×${l.odds.toFixed(2)}</em>`).join("<br>")}</span>` : "";
+  const pay = b.status === "won" ? "+" + fmtEuro(b.payout)
+    : b.status === "lost" ? "−" + fmtEuro(b.stake)
+    : "→ " + fmtEuro(Math.round(b.stake * b.odds));
+  return `<div class="tbet-line tbet-${b.status}">
+    <span class="tbet-status">${ico}</span>
+    <span class="tbet-body">
+      <span class="tbet-label">${b.label}${b.match ? ` <span class="tbet-match">${b.match}</span>` : ""}</span>
+      ${legs}
+      <span class="tbet-meta">${noTourney || !t ? "" : flagHTML(t.country) + " " + t.city + (b.year ? " " + b.year : "") + " · "}mise ${fmtEuro(b.stake)} · cote ×${b.odds.toFixed(2)}</span>
+      ${b.result ? `<span class="tbet-result">→ ${b.result}</span>` : ""}
+    </span>
+    <span class="tbet-payout">${pay}</span>
+  </div>`;
 }
 
-function drawBetsUI(container) {
-  // Paris LIBRES : 0 à 5 paris sur n'importe quel joueur (favori ou non).
-  // Ce qui n'est pas misé reste en cash — c'est ton argent réel de la saison.
+/* ============================================================
+   PARIS DE TOUR — vainqueurs de tous les matchs du tour (sauf
+   les tiens), en simples ou en COMBINÉ (cotes multipliées 🚀)
+   ============================================================ */
+let rbState = { key: null, picks: {}, combo: true, stake: null, open: null };
+
+function renderRoundBets(el, rec) {
+  const t = CALENDAR[rec.index];
   const cp = customPlayer();
-  const slip = new Map(state.bets.map(b => [b.pid, b.amount]));
+  const roundLbl = rec.type === "bracket"
+    ? roundShortLabel(rec.roundsNames[rec.currentRound], t.drawSize)
+    : ({ rr: "Poules", sf: "Demi-finales", final: "Finale" })[rec.phase];
+  const slipKey = rec.id + "|" + roundKeyOf(rec);
+  if (rbState.key !== slipKey) rbState = { key: slipKey, picks: {}, combo: true, stake: null, open: null };
 
-  container.innerHTML = `
-    <h2>4 · Place tes paris — capital : ${fmtEuro(state.bankroll)}</h2>
-    <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
-      Mise sur <strong>qui tu veux</strong> (${BET_PLAYERS} paris max — tes favoris, ton champion, ou personne).
-      Gain d'un pari = mise × <strong>prize money réel / prize money attendu</strong> du joueur, encaissé en fin de saison.
-      Ce que tu ne mises pas reste en <strong>cash</strong> : paris de tournoi 🎰 et doses de dopage 💉 (${fmtEuro(DOPE_COST)}).
-      ⚠️ En fin de saison, un gain global est imposé à <strong>${Math.round(TAX_RATE * 100)} %</strong> — une perte, non —
-      et tu repars la saison suivante avec ce qu'il te reste.</p>
-    <div class="bets-layout">
-      <div>
-        <input class="fav-search" id="bet-search" placeholder="🔍 Rechercher un joueur…">
-        <div class="fav-grid" id="bet-grid" style="max-height:420px"></div>
-      </div>
-      <div class="bet-slip">
-        <h3>🎫 Ton ticket</h3>
-        <div id="slip-rows"></div>
-        <div class="bet-total" id="slip-total"></div>
-        <div class="fav-actions">
-          <button class="btn btn-gold" id="bets-go">🎾 Valider &amp; lancer la saison</button>
-          <button class="btn btn-ghost btn-sm" id="bets-even">⚖️ Tout miser, réparti également</button>
-          <button class="btn btn-ghost btn-sm" id="bets-random">🎲 Ticket au hasard</button>
-        </div>
-      </div>
-    </div>`;
+  const rows = listRoundMatches(rec);
+  const betableRows = rows.filter(({ m }) => m.winner === null && !m.walkover && m.p1 !== null && m.p2 !== null &&
+    !(cp && (m.p1 === cp.id || m.p2 === cp.id)));
+  const ownRows = cp ? rows.filter(({ m }) => m.winner === null && !m.walkover && m.p1 !== null && m.p2 !== null && (m.p1 === cp.id || m.p2 === cp.id)) : [];
+  const myOpen = (state.tbets || []).filter(b => b.tourneyId === rec.id && b.status === "open" && (b.kind === "round" || b.kind === "match"));
+  if (!betableRows.length && !ownRows.length && !myOpen.length) return;
 
-  const grid = $("#bet-grid");
-  function drawGrid(filter = "") {
-    grid.innerHTML = "";
-    const f = filter.toLowerCase();
-    state.players.slice()
-      .sort((a, b) => betOdds(b.id) - betOdds(a.id))
-      .filter(p => p.name.toLowerCase().includes(f) || p.cat.toLowerCase().includes(f))
-      .forEach(p => {
-        const b = document.createElement("button");
-        b.className = "fav-item" + (slip.has(p.id) ? " selected" : "");
-        b.innerHTML = `<span class="f-flag">${flagHTML(p.flag)}</span>
-          <span style="flex:1"><strong>${p.name}${p.custom ? " 🎾" : ""}</strong><span class="f-cat">${p.cat}</span></span>
-          ${state.favorites.includes(p.id) ? '<span class="fav-star">⭐</span>' : ""}
-          <span class="odds-badge">×${betOdds(p.id).toFixed(2)}</span>
-          <span class="mini-card-btn" title="Voir la carte de ${p.name}">🪪</span>`;
-        b.addEventListener("click", () => {
-          if (slip.has(p.id)) slip.delete(p.id);
-          else if (slip.size < BET_PLAYERS) slip.set(p.id, 0);
-          if (slip.size) spreadEvenly(); // répartition auto, modifiable ensuite
-          refresh();
-        });
-        // Consulter la carte du joueur avant de miser (sans le sélectionner)
-        b.querySelector(".mini-card-btn").addEventListener("click", e => {
-          e.stopPropagation();
-          openPlayerCard(p.id);
-        });
-        grid.appendChild(b);
+  const built = rec.roundMk && rec.roundMk.key === roundKeyOf(rec) && !rec.roundMk.partial;
+  const isOpen = rbState.open === null ? (built || (betableRows.length > 0 && betableRows.length <= 8)) : rbState.open;
+
+  const card = document.createElement("div");
+  card.className = "card round-bets";
+  card.innerHTML = `
+    <div class="rb-head">
+      <h3>🎰 Parier sur le tour — ${roundLbl}</h3>
+      <span class="mp-cash">💶 <strong>${fmtEuro(Math.round(state.cash || 0))}</strong></span>
+      ${betableRows.length ? `<button class="btn btn-ghost btn-sm" id="rb-toggle">${isOpen ? "▴ Replier"
+        : "▾ Coter les " + betableRows.length + " match" + (betableRows.length > 1 ? "s" : "") + " du tour"}</button>` : ""}
+    </div>
+    <div id="rb-body" class="${isOpen ? "" : "hidden"}"></div>
+    <div id="rb-open"></div>`;
+  el.appendChild(card);
+
+  const body = card.querySelector("#rb-body");
+
+  function buildBody() {
+    const mkR = ensureRoundMarkets(rec);
+    body.innerHTML = `
+      <div class="mp-note" style="margin:6px 0 8px">Choisis un vainqueur par match — en <strong>combiné</strong>, les cotes se multiplient 🚀</div>
+      <div class="rb-list" id="rb-list"></div>
+      <div class="rb-slip" id="rb-slip"></div>`;
+    const listEl = body.querySelector("#rb-list");
+    const slipEl = body.querySelector("#rb-slip");
+
+    function drawList() {
+      listEl.innerHTML = "";
+      ownRows.forEach(({ m }) => {
+        const a = getPlayer(m.p1), b = getPlayer(m.p2);
+        listEl.insertAdjacentHTML("beforeend", `<div class="rb-match rb-own">
+          <span class="rb-ownlab">⭐ ${flagHTML(a.flag)} ${a.name} – ${flagHTML(b.flag)} ${b.name}</span>
+          <span class="rb-noodds">🚫 Ton match — pari interdit</span></div>`);
       });
-  }
-
-  function spreadEvenly() {
-    const pids = Array.from(slip.keys());
-    if (pids.length === 0) return;
-    const base = Math.floor(state.bankroll / pids.length / 100) * 100;
-    let rest = state.bankroll - base * pids.length;
-    pids.forEach(pid => {
-      let a = base;
-      if (rest >= 100) { a += 100; rest -= 100; }
-      slip.set(pid, a);
-    });
-  }
-
-  function drawSlip() {
-    const rows = $("#slip-rows");
-    rows.innerHTML = "";
-    if (slip.size === 0) {
-      rows.innerHTML = `<div class="bet-empty">Aucun pari pour l'instant — c'est permis !
-        Tout ton capital (${fmtEuro(state.bankroll)}) restera en cash pour les paris de tournoi.
-        Sélectionne des joueurs dans la liste pour miser (les cotes ×élevées sont les outsiders).</div>`;
+      betableRows.forEach(({ ref, m }) => {
+        const key = refKey(ref);
+        const entry = mkR.byKey[key];
+        if (!entry) return;
+        const mk = entry.mk;
+        const row = document.createElement("div");
+        row.className = "rb-match";
+        [m.p1, m.p2].forEach((pid, side) => {
+          const p = getPlayer(pid);
+          const o = mk.winner[side].odds;
+          const btn = document.createElement("button");
+          btn.className = "rb-side" + (rbState.picks[key] === pid ? " rb-sel" : "");
+          btn.innerHTML = `<span class="rb-pn">${flagHTML(p.flag)} ${p.name}${state.favorites.includes(pid) ? " ⭐" : ""}</span><span class="rb-odds">×${o.toFixed(2)}</span>`;
+          btn.addEventListener("click", () => {
+            if (rbState.picks[key] === pid) delete rbState.picks[key];
+            else rbState.picks[key] = pid;
+            drawList(); drawSlip();
+          });
+          row.appendChild(btn);
+        });
+        listEl.appendChild(row);
+      });
     }
-    slip.forEach((amount, pid) => {
-      const p = getPlayer(pid);
-      const row = document.createElement("div");
-      row.className = "bet-row";
-      row.innerHTML = `
-        <span class="f-flag">${flagHTML(p.flag)}</span>
-        <span class="br-name">${p.name}${p.custom ? " 🎾" : ""}${state.favorites.includes(pid) ? " ⭐" : ""}
-          <span class="br-odds">cote ×${betOdds(pid).toFixed(2)} · attendu ${fmtEuro(state.refs[pid])}</span></span>
-        <input type="number" min="100" step="100" value="${amount}">
-        <button class="br-del" title="Retirer">✕</button>`;
-      row.querySelector("input").addEventListener("input", e => {
-        slip.set(pid, Math.max(0, Math.round(Number(e.target.value) || 0)));
-        drawTotal();
+
+    function slipData() {
+      return Object.entries(rbState.picks).map(([key, pid]) => {
+        const e = mkR.byKey[key];
+        if (!e) return null;
+        const o = e.mk.winner.find(w => w.pid === pid);
+        return o ? { ref: e.ref, pid, odds: o.odds } : null;
+      }).filter(Boolean);
+    }
+
+    function drawSlip() {
+      const picks = slipData();
+      if (!picks.length) {
+        slipEl.innerHTML = `<div class="bet-empty">Sélectionne des vainqueurs ci-dessus pour construire ton ticket 🎫</div>`;
+        return;
+      }
+      const combo = rbState.combo && picks.length >= 2;
+      const prodOdds = Math.round(picks.reduce((o, p) => o * p.odds, 1) * 100) / 100;
+      const defStake = Math.max(TBET_MIN, Math.min(500, Math.floor((state.cash || 0) / 100) * 100));
+      const stake = rbState.stake !== null ? rbState.stake : defStake;
+      slipEl.innerHTML = `
+        <div class="rb-slip-head">
+          <span>🎫 ${picks.length} sélection${picks.length > 1 ? "s" : ""}</span>
+          <span class="rb-mode">
+            <button class="rb-mode-btn ${combo ? "" : "active"}" id="rb-simple">Simples</button>
+            <button class="rb-mode-btn ${combo ? "active" : ""}" id="rb-combo" ${picks.length < 2 ? "disabled" : ""}>Combiné ×${prodOdds.toFixed(2)}</button>
+          </span>
+        </div>
+        <div class="mk-form">
+          <input type="number" id="rb-stake" min="${TBET_MIN}" step="100" value="${stake}">
+          <span class="mk-gain" id="rb-gain"></span>
+          <button class="btn btn-sm" id="rb-go">Parier 🎰</button>
+        </div>`;
+      const stakeEl = slipEl.querySelector("#rb-stake");
+      const gainEl = slipEl.querySelector("#rb-gain");
+      const goBtn = slipEl.querySelector("#rb-go");
+      function refreshGain() {
+        const v = Math.round(Number(stakeEl.value) || 0);
+        rbState.stake = v;
+        const total = combo ? v : v * picks.length;
+        const gain = combo ? Math.round(v * prodOdds) : Math.round(picks.reduce((s, p) => s + v * p.odds, 0));
+        const ok = v >= TBET_MIN && total <= (state.cash || 0);
+        goBtn.disabled = !ok;
+        gainEl.textContent = !ok && total > (state.cash || 0) ? "solde insuffisant (" + fmtEuro(total) + " demandés)"
+          : combo ? `cote ×${prodOdds.toFixed(2)} → gain potentiel ${fmtEuro(gain)}`
+          : `${picks.length} pari${picks.length > 1 ? "s" : ""} de ${fmtEuro(v)} (total ${fmtEuro(total)}) → jusqu'à ${fmtEuro(gain)}`;
+      }
+      stakeEl.addEventListener("input", refreshGain);
+      slipEl.querySelector("#rb-simple").addEventListener("click", () => { rbState.combo = false; drawSlip(); });
+      const cb = slipEl.querySelector("#rb-combo");
+      if (!cb.disabled) cb.addEventListener("click", () => { rbState.combo = true; drawSlip(); });
+      goBtn.addEventListener("click", () => {
+        try {
+          placeRoundBets(rec.id, picks.map(p => ({ ref: p.ref, pid: p.pid })), stakeEl.value, combo);
+          rbState.picks = {};
+          rbState.stake = null;
+          navigate("tournament", { id: rec.id, section: viewParams.section });
+        } catch (e) { alert(e.message); }
       });
-      row.querySelector(".br-del").addEventListener("click", () => { slip.delete(pid); refresh(); });
-      rows.appendChild(row);
+      refreshGain();
+    }
+    drawList();
+    drawSlip();
+  }
+
+  function buildWithLoading() {
+    body.innerHTML = `<div class="sbk-loading"><span class="spin">🎾</span>
+      Le bookmaker cote les ${betableRows.length} matchs du tour…</div>`;
+    setTimeout(() => { buildBody(); }, 40);
+  }
+
+  const toggleBtn = card.querySelector("#rb-toggle");
+  if (toggleBtn) toggleBtn.addEventListener("click", () => {
+    const wasHidden = body.classList.contains("hidden");
+    rbState.open = wasHidden;
+    body.classList.toggle("hidden");
+    toggleBtn.textContent = wasHidden ? "▴ Replier"
+      : "▾ Coter les " + betableRows.length + " match" + (betableRows.length > 1 ? "s" : "") + " du tour";
+    if (wasHidden && !body.childNodes.length) {
+      if (rec.roundMk && rec.roundMk.key === roundKeyOf(rec) && !rec.roundMk.partial) buildBody();
+      else buildWithLoading();
+    }
+  });
+
+  if (isOpen) {
+    if (built) buildBody();
+    else buildWithLoading();
+  }
+
+  const openEl = card.querySelector("#rb-open");
+  if (myOpen.length) {
+    openEl.innerHTML = `<div class="mk-title" style="margin-top:10px">🎫 Tes paris en cours sur ce tournoi</div>` +
+      myOpen.map(b => tbetLineHTML(b, true)).join("");
+  }
+}
+
+/* ============================================================
+   PARIS DE MATCH — les marchés classiques d'un match précis :
+   vainqueur, 1er set, score exact, plus/moins de jeux, handicap,
+   tie-break, et plus/moins d'aces et de doubles fautes PAR JOUEUR
+   ============================================================ */
+function renderMatchBetBox(container, rec, ref, onPlaced) {
+  container.innerHTML = "";
+  const m = matchByRef(rec, ref);
+  if (!m || m.winner !== null || m.walkover || rec.status !== "active") return;
+  const entry = ensureMatchMarket(rec, ref); // cote CE match à la demande (instantané)
+  if (!entry) return; // match de ton champion : pas de cote
+  const mk = entry.mk;
+  const frNum = x => String(x).replace(".", ",");
+  const myOpen = betsOnRef(rec, ref).filter(b => b.status === "open");
+
+  const box = document.createElement("div");
+  box.className = "mb-box";
+  box.innerHTML = `
+    <div class="mb-head">
+      <button class="btn btn-ghost btn-sm" id="mb-toggle">🎰 Parier sur ce match ▾</button>
+      <span class="mp-cash">💶 <strong>${fmtEuro(Math.round(state.cash || 0))}</strong></span>
+      ${myOpen.length ? `<span class="mb-count">🎫 ${myOpen.length} pari${myOpen.length > 1 ? "s" : ""} en jeu (${fmtEuro(myOpen.reduce((s, b) => s + b.stake, 0))})</span>` : ""}
+    </div>
+    <div class="mb-markets hidden" id="mb-markets"></div>`;
+  container.appendChild(box);
+  const marketsEl = box.querySelector("#mb-markets");
+  let built = false, selection = null, betBtn = null;
+
+  box.querySelector("#mb-toggle").addEventListener("click", function () {
+    const hidden = marketsEl.classList.toggle("hidden");
+    this.innerHTML = hidden ? "🎰 Parier sur ce match ▾" : "🎰 Parier sur ce match ▴";
+    if (!built) { build(); built = true; }
+  });
+
+  const takenKey = (market, pid) => rec.id + "|" + refKey(ref) + "|" + market + (pid !== undefined ? ":" + pid : "");
+  const taken = (market, pid) => (state.tbets || []).some(b => b.marketKey === takenKey(market, pid));
+
+  function chip(market, pick, label, odds, pidKey) {
+    const b = document.createElement("button");
+    const off = taken(market, pidKey);
+    b.className = "mk-chip";
+    b.disabled = off;
+    b.innerHTML = off ? `${label} <span class="mk-odds">✔ misé</span>` : `${label} <span class="mk-odds">×${odds.toFixed(2)}</span>`;
+    if (!off) b.addEventListener("click", () => {
+      selection = { market, pick, odds, label };
+      marketsEl.querySelectorAll(".mk-chip").forEach(c => c.classList.remove("mk-selected"));
+      b.classList.add("mk-selected");
+      updateForm();
     });
-    drawTotal();
+    return b;
   }
-
-  function drawTotal() {
-    const total = Array.from(slip.values()).reduce((s, a) => s + a, 0);
-    const ok = total <= state.bankroll && Array.from(slip.values()).every(a => a >= 100);
-    const el = $("#slip-total");
-    el.className = "bet-total " + (ok ? "ok" : "ko");
-    const cash = state.bankroll - total;
-    el.innerHTML = `<span>Total misé</span><span>${fmtEuro(total)} / ${fmtEuro(state.bankroll)}</span>` +
-      (ok ? `<span class="bt-cash">💵 ${fmtEuro(cash)} en cash (paris de tournoi &amp; dopage)</span>` : "");
-    $("#bets-go").disabled = !ok;
+  function block(title, chips) {
+    const div = document.createElement("div");
+    div.className = "mk-block";
+    div.innerHTML = `<div class="mk-title">${title}</div>`;
+    const row = document.createElement("div");
+    row.className = "mk-row";
+    chips.forEach(c => row.appendChild(c));
+    div.appendChild(row);
+    marketsEl.appendChild(div);
   }
-
-  function refresh() { drawGrid($("#bet-search").value); drawSlip(); }
-
-  $("#bet-search").addEventListener("input", e => drawGrid(e.target.value));
-  $("#bets-even").addEventListener("click", () => { if (slip.size) { spreadEvenly(); drawSlip(); } });
-  $("#bets-random").addEventListener("click", () => {
-    slip.clear();
-    const pool = shuffle(state.players.map(p => p.id));
-    pool.slice(0, BET_PLAYERS).forEach(pid => slip.set(pid, 0));
-    spreadEvenly();
-    refresh();
-  });
-  $("#bets-go").addEventListener("click", () => {
-    try {
-      placeBets(Array.from(slip.entries()).map(([pid, amount]) => ({ pid, amount })));
-      showMain();
-    } catch (err) { alert(err.message); }
-  });
-  refresh();
+  function updateForm() {
+    if (!selection) return;
+    const sel = marketsEl.querySelector("#mb-sel"), stake = marketsEl.querySelector("#mb-stake"), gain = marketsEl.querySelector("#mb-gain");
+    sel.innerHTML = `${selection.label} <span class="mk-odds">×${selection.odds.toFixed(2)}</span>`;
+    stake.disabled = false;
+    if (!stake.value) stake.value = Math.max(TBET_MIN, Math.min(500, Math.floor((state.cash || 0) / 100) * 100));
+    const refreshGain = () => {
+      const v = Math.round(Number(stake.value) || 0);
+      const ok = v >= TBET_MIN && v <= (state.cash || 0);
+      betBtn.disabled = !ok;
+      gain.textContent = ok ? "→ gain potentiel " + fmtEuro(Math.round(v * selection.odds)) : "";
+    };
+    stake.oninput = refreshGain;
+    refreshGain();
+  }
+  function build() {
+    const nm = pid => getPlayer(pid).name;
+    block("1️⃣ 2️⃣ Vainqueur du match", mk.winner.map(w =>
+      chip("winner", w.pid, `${flagHTML(getPlayer(w.pid).flag)} ${nm(w.pid)}`, w.odds)));
+    block("🧮 Score exact (en sets)", mk.score.map(s =>
+      chip("score", s.pid + ":" + s.sw + "-" + s.sl, `${nm(s.pid)} ${s.sw}-${s.sl}`, s.odds)));
+    block(`📏 Nombre de jeux du match — ligne à ${frNum(mk.ou.line)}`, [
+      chip("ou", "over", `Plus de ${frNum(mk.ou.line)}`, mk.ou.over),
+      chip("ou", "under", `Moins de ${frNum(mk.ou.line)}`, mk.ou.under)]);
+    block("⚖️ Handicap jeux", [
+      chip("hcp", "fav", `${nm(mk.hcp.favPid)} −${frNum(mk.hcp.line)}`, mk.hcp.fav),
+      chip("hcp", "dog", `${nm(mk.hcp.dogPid)} +${frNum(mk.hcp.line)}`, mk.hcp.dog)]);
+    block("🥇 Vainqueur du 1er set", mk.set1.map(w =>
+      chip("set1", w.pid, `${flagHTML(getPlayer(w.pid).flag)} ${nm(w.pid)}`, w.odds)));
+    block("🔥 Au moins un tie-break dans le match ?", [
+      chip("tb", "yes", "Oui", mk.tb.yes),
+      chip("tb", "no", "Non", mk.tb.no)]);
+    block("🎯 Aces par joueur — plus/moins", mk.pAces.flatMap(x => [
+      chip("pace", x.pid + ":over", `${nm(x.pid)} · + de ${frNum(x.line)}`, x.over, x.pid),
+      chip("pace", x.pid + ":under", `${nm(x.pid)} · − de ${frNum(x.line)}`, x.under, x.pid)]));
+    block("😬 Doubles fautes par joueur — plus/moins", mk.pDf.flatMap(x => [
+      chip("pdf", x.pid + ":over", `${nm(x.pid)} · + de ${frNum(x.line)}`, x.over, x.pid),
+      chip("pdf", x.pid + ":under", `${nm(x.pid)} · − de ${frNum(x.line)}`, x.under, x.pid)]));
+    const form = document.createElement("div");
+    form.className = "mk-form";
+    form.innerHTML = `<span class="mk-sel" id="mb-sel">Choisis un pari ci-dessus…</span>
+      <input type="number" id="mb-stake" min="${TBET_MIN}" step="100" placeholder="Mise €" disabled>
+      <span class="mk-gain" id="mb-gain"></span>`;
+    betBtn = mkBtn("Parier", "btn btn-sm", () => {
+      try {
+        placeMatchBet(rec.id, ref, selection.market, selection.pick, marketsEl.querySelector("#mb-stake").value);
+        if (onPlaced) onPlaced();
+      } catch (e) { alert(e.message); }
+    });
+    betBtn.disabled = true;
+    form.appendChild(betBtn);
+    marketsEl.appendChild(form);
+  }
 }
 
 /* ============================================================
@@ -571,8 +765,11 @@ function newSeasonConfirm() {
 function goNextSeason() {
   const cp = customPlayer();
   const st = seasonSettlement();
-  if (!confirm(`Lancer la saison ${state.year + 1} ?\n\n🧾 Bilan ${state.year} : ${st.gross >= 0 ? "gain de " + fmtEuro(st.gross) + ", impôt de " + fmtEuro(st.tax) + " (30 %)" : "perte de " + fmtEuro(Math.abs(st.gross)) + ", aucun impôt"}.\n` +
-    `💼 Tu repars avec ${fmtEuro(st.net)} — rien d'autre n'est offert.\n\n` +
+  if (!confirm(`Lancer la saison ${state.year + 1} ?\n\n🧾 Bilan ${state.year} :\n` +
+    `💶 Solde bancaire : ${fmtEuro(st.cash)} (prize money nets, taxes, staff et frais déjà réglés tournoi par tournoi)\n` +
+    `🎾 Prize money encaissés : ${fmtEuro(st.prize)} bruts → ${fmtEuro(st.prizeNet)} nets\n` +
+    `🎰 Paris : ${st.betNet >= 0 ? "+" : "−"}${fmtEuro(Math.abs(st.betNet))}${st.betTax > 0 ? " → impôt " + fmtEuro(st.betTax) + " (30 %)" : " (aucun impôt)"}\n\n` +
+    `💼 Tu repars avec ${fmtEuro(st.final)}${st.final < 0 ? " — la dette te suit !" : ""}.\n\n` +
     `Le plateau retire de nouvelles compétences, la saison démarre avec les classements finaux de ${state.year}` +
     (cp ? `, et ${cp.name} gagne ${CHAMPION_SEASON_BONUS} points de compétence.` : "."))) return;
   try {
@@ -613,8 +810,8 @@ function renderSeason(el) {
         <span class="cl-body">n°1 : <strong>${s.no1Flag ? flagHTML(s.no1Flag) + " " : ""}${s.no1}</strong>
           · Masters : ${s.mastersFlag ? flagHTML(s.mastersFlag) + " " : ""}${s.mastersChamp}
           ${s.cpRank ? `· ton champion n°${s.cpRank}${s.cpTitles ? ` (${s.cpTitles} titre${s.cpTitles > 1 ? "s" : ""})` : ""}` : ""}
-          ${s.tax !== undefined ? `<span class="cl-tax">${s.tax > 0 ? "impôt " + fmtEuro(s.tax) : "sans impôt"}</span>` : ""}</span>
-        <span class="cl-bank ${s.start !== undefined ? (s.bank >= s.start ? "up" : "down") : (s.bank >= BET_BUDGET ? "up" : "down")}">${fmtEuro(s.bank)}</span>
+          ${s.prizeNet !== undefined ? `<span class="cl-tax">💼 prize net ${fmtEuro(s.prizeNet)} · paris ${s.betNet >= 0 ? "+" : "−"}${fmtEuro(Math.abs(s.betNet))}</span>` : ""}</span>
+        <span class="cl-bank ${s.bank >= (s.start || 0) ? "up" : "down"}">${fmtEuro(s.bank)}</span>
       </div>`).join("");
     el.appendChild(pc);
   }
@@ -728,34 +925,154 @@ function renderTournament(el, tid, readOnly) {
     actions.appendChild(mkBtn("🏆 Récap du tournoi", "btn btn-gold", () => navigate("recap", { id: tid })));
     actions.appendChild(mkBtn("← Saison", "btn btn-ghost", () => navigate("season")));
   } else if (!readOnly) {
-    // Un seul bouton : la simulation avance et s'arrête sur chaque match parié
-    actions.appendChild(mkBtn("⏭ Simuler le tournoi", "btn", () => {
+    // 🎾 Jouer mon club : la simulation avance et s'arrête sur chaque match du club
+    actions.appendChild(mkBtn("🎾 Jouer mon club", "btn", () => {
+      playAllMode = false;
       const nm = advanceToNextBetMatch(rec);
       if (rec.status === "done") { navigate("recap", { id: tid }); return; }
       navigate("tournament", { id: tid });
       if (nm) openMatchModal(rec, nm);
+    }));
+    // 🎾 Jouer le tournoi : TOUS les matchs, un par un, à la main
+    actions.appendChild(mkBtn("🎾 Jouer le tournoi", "btn btn-ghost btn-all", () => {
+      playAllMode = true;
+      const nm = findNextBetMatch(rec, true);
+      if (!nm) { navigate(rec.status === "done" ? "recap" : "tournament", { id: tid }); return; }
+      navigate("tournament", { id: tid });
+      openMatchModal(rec, nm);
     }));
     actions.appendChild(mkBtn("← Saison", "btn btn-ghost", () => navigate("season")));
   } else {
     actions.appendChild(mkBtn("← Retour", "btn btn-ghost", () => navigate("history")));
   }
 
-  if (!readOnly && rec.status === "active") renderMarketPanel(el, rec);
+  if (!readOnly && rec.status === "active") {
+    if (!marketsClosed(rec)) {
+      // Écran de début de tournoi : 1. présentation · 2. dopage · 3. les paris
+      renderTourneyPresentation(el, rec);
+      renderDopingCard(el, rec);
+      renderMarketPanel(el, rec);
+      renderRoundBets(el, rec);
+    } else {
+      renderRoundBets(el, rec);
+      renderMarketPanel(el, rec);
+    }
+  }
 
   if (rec.type === "finals") { renderFinalsBody(el, rec, readOnly); return; }
   renderBracketBody(el, rec, readOnly);
 }
 
 /* ============================================================
-   PARIS DE TOURNOI — panneau de marché (ouvert jusqu'au 1er match)
+   ÉCRAN DE DÉBUT DE TOURNOI (v23)
+   1. Présentation : ville, tenant du titre, dotation, qualifiés
+   2. 💉 Préparation spéciale (10 000 € la dose)
+   3. 🎰 FUN'BET — le guichet du tournoi, façon site de paris pro
    ============================================================ */
+function renderTourneyPresentation(el, rec) {
+  const t = CALENDAR[rec.index];
+  const card = document.createElement("div");
+  card.className = "card tp-card";
+  const catLabel = t.cat === "GC" ? "Grand Chelem" : t.cat === "M1000" ? "Masters 1000" : "Masters";
+  const dc = defendingChampion(t);
+  const defendHtml = dc
+    ? (() => { const p = getPlayer(dc.pid); return `🛡 Vainqueur l'an dernier : <strong>${flagHTML(p.flag)} ${p.name}</strong> — il remet <strong>${fmtPts(dc.pts)} pts</strong> en jeu`; })()
+    : `🆕 Première édition de l'ère Fun'is — le palmarès s'écrit cette semaine`;
+  let qualHtml;
+  if (rec.qualifiers && rec.qualifiers.length) {
+    qualHtml = `<div class="tp-qtitle">🎟 Les 8 repêchés des qualifications (tirage pondéré au-delà du top ${M1000_DIRECT})</div>
+      <div class="mk-row">` + rec.qualifiers.map(pid => {
+        const p = getPlayer(pid);
+        return `<span class="qual-chip"><span class="q-badge">Q</span> ${flagHTML(p.flag)} ${p.name}
+          <span class="qual-rank">n°${currentRank(pid, state.defending ? "rolling" : "points")}</span></span>`;
+      }).join("") + `</div>`;
+  } else if (rec.type === "finals") {
+    qualHtml = `<div class="tp-qtitle">🎟 Les 8 qualifiés à la race</div>
+      <div class="mk-row">` + rec.entrants.map(pid => {
+        const p = getPlayer(pid);
+        return `<span class="qual-chip"><span class="q-badge">${rec.seedsMap[pid]}</span> ${flagHTML(p.flag)} ${p.name}</span>`;
+      }).join("") + `</div>`;
+  } else {
+    qualHtml = `<div class="tp-qtitle">🎾 Tableau complet — les ${t.drawSize} joueurs du circuit sont au rendez-vous</div>`;
+  }
+  card.innerHTML = `
+    <div class="tp-head">
+      <div class="tp-title">${flagHTML(t.country)} ${t.name}</div>
+      <div class="tp-meta">${t.city} · ${tourneyDates(t)} · ${t.surfaceLabel} · ${catLabel} · ${t.drawSize} joueurs</div>
+    </div>
+    <div class="tp-facts">
+      <span class="tp-fact">${defendHtml}</span>
+      <span class="tp-fact">💰 Dotation : <strong>${fmtEuro(tournamentPool(t))}</strong></span>
+      <span class="tp-fact">${(() => {
+        const cp0 = customPlayer();
+        return cp0 && rec.entrants.includes(cp0.id)
+          ? `✈️ Ta part des frais de saison : <strong>−${fmtEuro(travelFeeFor(rec.index))}</strong>, débitée à la fin du tournoi`
+          : `💤 <strong>${cp0 ? cp0.name : "Ton champion"} n'est pas engagé</strong> — aucune quote-part de frais sur ce tournoi`;
+      })()}</span>
+    </div>
+    <div class="tp-qual">${qualHtml}</div>`;
+  el.appendChild(card);
+}
+
+/* 💉 Encadré dopage : booster un joueur de ton club pour ce tournoi */
+function renderDopingCard(el, rec) {
+  const t = CALENDAR[rec.index];
+  const card = document.createElement("div");
+  card.className = "card doping-card";
+  if (rec.doped !== undefined && rec.doped !== null) {
+    const p = getPlayer(rec.doped);
+    card.innerHTML = `<div class="mk-title">💉 Préparation spéciale</div>
+      <div class="dope-info">💉 <strong>${p.name}</strong> est boosté pour ce tournoi : insensible à la fatigue…
+      mais <strong>5 % de risque de contrôle positif</strong> à l'arrivée (3 mois de suspension) !</div>`;
+    el.appendChild(card);
+    return;
+  }
+  const n = state.syringes || 0;
+  if (n <= 0) {
+    card.innerHTML = `<div class="mk-title">💉 Préparation spéciale</div>
+      <div class="dope-info">Plus de doses cette saison.</div>`;
+    el.appendChild(card);
+    return;
+  }
+  if ((state.cash || 0) < DOPE_COST) {
+    card.innerHTML = `<div class="mk-title">💉 Préparation spéciale — ${n} dose${n > 1 ? "s" : ""} · ${fmtEuro(DOPE_COST)} la dose</div>
+      <div class="dope-info">Il te faut <strong>${fmtEuro(DOPE_COST)}</strong> sur ton compte pour payer une dose
+      (tu as ${fmtEuro(Math.round(state.cash || 0))}). Gagne des paris pour regarnir ton solde.</div>`;
+    el.appendChild(card);
+    return;
+  }
+  const cands = (state.favorites || []).filter(pid => rec.entrants.includes(pid));
+  if (!cands.length) return;
+  card.innerHTML = `<div class="mk-title">💉 Préparation spéciale — ${n} dose${n > 1 ? "s" : ""} restante${n > 1 ? "s" : ""} · ${fmtEuro(DOPE_COST)} la dose</div>
+    <div class="dope-info">Booste un joueur de ${clubName()} pour ce tournoi (débité en direct) : un vrai coup de pouce, zéro fatigue…
+    mais <strong>5 % de risque de contrôle positif</strong> à l'issue du tournoi → 3 mois de suspension.</div>`;
+  const row = document.createElement("div");
+  row.className = "mk-row";
+  cands.forEach(pid => {
+    const p = getPlayer(pid);
+    const b = document.createElement("button");
+    b.className = "mk-chip mk-dope";
+    b.innerHTML = `💉 ${flagHTML(p.flag)} ${p.name}`;
+    b.addEventListener("click", () => {
+      if (!confirm(`Doper ${p.name} pour ${t.name} — ${fmtEuro(DOPE_COST)} débités tout de suite ?\n\nAvantage pour tout le tournoi et aucune fatigue — mais 5 % de risque de contrôle positif à l'arrivée (3 mois de suspension). Il te restera ${n - 1} dose${n - 1 > 1 ? "s" : ""} et ${fmtEuro(Math.round((state.cash || 0) - DOPE_COST))}.`)) return;
+      try {
+        applyDoping(rec.id, pid);
+        navigate("tournament", { id: rec.id, section: viewParams.section });
+        updateBankChip();
+      } catch (e) { alert(e.message); }
+    });
+    row.appendChild(b);
+  });
+  card.appendChild(row);
+  el.appendChild(card);
+}
+
+/* 🎰 FUN'BET — le guichet du tournoi : vainqueur (TOUS les joueurs cotés,
+   avec recherche) + totaux plus/moins (aces, doubles fautes, % services) */
 function renderMarketPanel(el, rec) {
   const t = CALENDAR[rec.index];
-  const mk = rec.markets;
-  if (!mk) return;
   const closed = marketsClosed(rec);
-  const myBets = (state.tbets || []).filter(b => b.tourneyId === rec.id);
-
+  const myBets = (state.tbets || []).filter(b => b.tourneyId === rec.id && b.kind === "tournament");
   const dopedNote = rec.doped !== undefined && rec.doped !== null
     ? `<span class="tbet-chip dope-chip">💉 ${getPlayer(rec.doped).name} boosté</span>` : "";
 
@@ -764,7 +1081,7 @@ function renderMarketPanel(el, rec) {
     if (myBets.length === 0 && !dopedNote) return;
     const strip = document.createElement("div");
     strip.className = "card market-strip";
-    strip.innerHTML = `<strong>🎰 Tes paris sur ce tournoi :</strong> ` + myBets.map(b =>
+    strip.innerHTML = `<strong>🏆 Tes paris de tournoi :</strong> ` + myBets.map(b =>
       `<span class="tbet-chip">${b.label} · ${fmtEuro(b.stake)} ×${b.odds.toFixed(2)}
         ${b.status === "won" ? "✅" : b.status === "lost" ? "❌" : "⏳"}</span>`).join(" ") + dopedNote;
     el.appendChild(strip);
@@ -772,176 +1089,124 @@ function renderMarketPanel(el, rec) {
   }
 
   const panel = document.createElement("div");
-  panel.className = "card market-panel";
-  panel.innerHTML = `
-    <div class="mp-head">
-      <h3>🎰 Les paris du tournoi</h3>
-      <span class="mp-cash">💵 Cash : <strong>${fmtEuro(Math.round(state.cash || 0))}</strong></span>
-      <span class="mp-note">Marché ouvert jusqu'au premier match · cotes calculées sur le tableau réel</span>
+  panel.className = "card market-panel sbk";
+  const headHtml = `
+    <div class="sbk-head">
+      <span class="sbk-brand">🎰 FUN'BET</span>
+      <span class="sbk-htitle">Les paris du tournoi</span>
+      <span class="sbk-cash">💶 ${fmtEuro(Math.round(state.cash || 0))}</span>
     </div>`;
 
-  /* Les repêchés des qualifications (Masters 1000) */
-  if (rec.qualifiers && rec.qualifiers.length) {
-    const qDiv = document.createElement("div");
-    qDiv.className = "mk-block qual-block";
-    qDiv.innerHTML = `<div class="mk-title">🎟 Repêchés des qualifications (tirage pondéré au-delà du top ${M1000_DIRECT})</div>
-      <div class="mk-row">` + rec.qualifiers.map(pid => {
-        const p = getPlayer(pid);
-        return `<span class="qual-chip"><span class="q-badge">Q</span> ${flagHTML(p.flag)} ${p.name}
-          <span class="qual-rank">n°${currentRank(pid, "points")}</span></span>`;
-      }).join("") + `</div>`;
-    panel.appendChild(qDiv);
+  // Cotes calculées au premier affichage (message d'attente, pas de gel)
+  if (!rec.markets) {
+    panel.innerHTML = headHtml + `
+      <div class="sbk-loading"><span class="spin">🎾</span>
+        Le bookmaker simule ${TBET_SIMS} fois le tableau réel, point par point,
+        pour coter les ${rec.entrants.length} joueurs…</div>`;
+    el.appendChild(panel);
+    setTimeout(() => {
+      ensureTournamentMarkets(rec);
+      if (currentView === "tournament" && viewParams.id === rec.id)
+        navigate("tournament", { ...viewParams });
+    }, 60);
+    return;
   }
 
-  /* 💉 Encadré dopage : booster un de tes 5 joueurs pour ce tournoi */
-  function dopingBox() {
-    const box = document.createElement("div");
-    box.className = "mk-block doping-block";
-    if (rec.doped !== undefined && rec.doped !== null) {
-      const p = getPlayer(rec.doped);
-      box.innerHTML = `<div class="mk-title">💉 Préparation spéciale</div>
-        <div class="dope-info">💉 <strong>${p.name}</strong> est boosté pour ce tournoi : insensible à la fatigue…
-        mais <strong>5 % de risque de contrôle positif</strong> à l'arrivée (3 mois de suspension) !</div>`;
-      return box;
-    }
-    const n = state.syringes || 0;
-    if (n <= 0) {
-      box.innerHTML = `<div class="mk-title">💉 Préparation spéciale</div>
-        <div class="dope-info">Plus de doses cette saison.</div>`;
-      return box;
-    }
-    if ((state.cash || 0) < DOPE_COST) {
-      box.innerHTML = `<div class="mk-title">💉 Préparation spéciale — ${n} dose${n > 1 ? "s" : ""} · ${fmtEuro(DOPE_COST)} la dose</div>
-        <div class="dope-info">Il te faut <strong>${fmtEuro(DOPE_COST)} de cash</strong> pour payer une dose
-        (tu as ${fmtEuro(Math.round(state.cash || 0))}). Revends un pari de saison ou gagne un pari de tournoi.</div>`;
-      return box;
-    }
-    const cands = (state.favorites || []).filter(pid => rec.entrants.includes(pid));
-    if (!cands.length) return null;
-    box.innerHTML = `<div class="mk-title">💉 Préparation spéciale — ${n} dose${n > 1 ? "s" : ""} restante${n > 1 ? "s" : ""} · ${fmtEuro(DOPE_COST)} la dose</div>
-      <div class="dope-info">Booste un de tes 5 favoris pour ce tournoi (payé en cash) : un vrai coup de pouce, zéro fatigue…
-      mais <strong>5 % de risque de contrôle positif</strong> à l'issue du tournoi → 3 mois de suspension.</div>`;
-    const row = document.createElement("div");
-    row.className = "mk-row";
-    cands.forEach(pid => {
-      const p = getPlayer(pid);
-      const b = document.createElement("button");
-      b.className = "mk-chip mk-dope";
-      b.innerHTML = `💉 ${flagHTML(p.flag)} ${p.name}`;
-      b.addEventListener("click", () => {
-        if (!confirm(`Doper ${p.name} pour ${t.name} — ${fmtEuro(DOPE_COST)} en cash ?\n\nAvantage pour tout le tournoi et aucune fatigue — mais 5 % de risque de contrôle positif à l'arrivée (3 mois de suspension). Il te restera ${n - 1} dose${n - 1 > 1 ? "s" : ""} et ${fmtEuro(Math.round((state.cash || 0) - DOPE_COST))} de cash.`)) return;
-        try {
-          applyDoping(rec.id, pid);
-          navigate("tournament", { id: rec.id, section: viewParams.section });
-        } catch (e) { alert(e.message); }
-      });
-      row.appendChild(b);
-    });
-    box.appendChild(row);
-    return box;
-  }
-
-  /* 🎫 Détail des paris déjà placés sur ce tournoi */
-  function placedList() {
-    if (!myBets.length) return null;
-    const box = document.createElement("div");
-    box.className = "mk-block mk-mybets";
-    box.innerHTML = `<div class="mk-title">🎫 Tes paris placés sur ce tournoi</div>`;
-    myBets.forEach(b => {
-      box.insertAdjacentHTML("beforeend", `
-        <div class="tbet-line tbet-open">
-          <span class="tbet-status">⏳</span>
-          <span class="tbet-body">
-            <span class="tbet-label">${b.label}</span>
-            <span class="tbet-meta">mise ${fmtEuro(b.stake)} · cote ×${b.odds.toFixed(2)}</span>
-          </span>
-          <span class="tbet-payout">→ ${fmtEuro(Math.round(b.stake * b.odds))}</span>
-        </div>`);
-    });
-    return box;
-  }
+  const mk = rec.markets;
+  panel.innerHTML = headHtml + `
+    <div class="sbk-note">Marché ouvert jusqu'au premier match · cotes simulées sur le tableau réellement tiré</div>`;
 
   if ((state.cash || 0) < TBET_MIN && myBets.length === 0) {
     panel.insertAdjacentHTML("beforeend", `<div class="mp-empty">
-      Il te faut du cash pour parier : va dans <strong>Mes paris</strong> (💶 en haut à droite)
-      et revends un de tes paris de saison (cash-out à 80 %) — ou garde une part
-      de ton capital en cash au départ de la saison.</div>`);
-    const dbEmpty = dopingBox();
-    if (dbEmpty) panel.appendChild(dbEmpty);
+      Solde insuffisant pour miser (minimum ${fmtEuro(TBET_MIN)}) — gagne des paris de match
+      ou de tour pour regarnir ton compte. 💶</div>`);
     el.appendChild(panel);
     return;
   }
 
-  let selection = null; // {market, pick, odds, label}
+  let selection = null;
+  const frNum = x => String(x).replace(".", ",");
 
-  function chip(market, pick, label, odds) {
-    const key = market === "prop" ? "prop:" + pick : market;
-    const taken = myBets.find(b => b.marketKey === key && b.status === "open");
+  /* ---- 🏆 Vainqueur : tous les joueurs, avec recherche ---- */
+  const winnerBox = document.createElement("div");
+  winnerBox.className = "sbk-market";
+  winnerBox.innerHTML = `
+    <div class="sbk-mtitle">🏆 Vainqueur du tournoi <span class="sbk-mcount">${mk.winner.length} joueurs cotés</span></div>
+    <input class="fav-search sbk-search" id="sbk-search" placeholder="🔍 Chercher un joueur…">
+    <div class="sbk-wgrid" id="sbk-wgrid"></div>`;
+  panel.appendChild(winnerBox);
+  const takenW = myBets.find(b => b.marketKey === "winner");
+  function drawWinners(filter = "") {
+    const grid = winnerBox.querySelector("#sbk-wgrid");
+    grid.innerHTML = "";
+    const f = filter.toLowerCase();
+    mk.winner
+      .filter(w => getPlayer(w.pid).name.toLowerCase().includes(f))
+      .forEach(w => {
+        const p = getPlayer(w.pid);
+        const picked = takenW && takenW.pick === w.pid;
+        const b = document.createElement("button");
+        b.className = "sbk-sel" + (picked ? " mk-placed" : "");
+        b.disabled = !!takenW;
+        b.innerHTML = `<span class="sbk-pn">${flagHTML(p.flag)} ${p.name}${state.favorites.includes(w.pid) ? " ⭐" : ""}</span>
+          <span class="sbk-rank">n°${currentRank(w.pid, state.defending ? "rolling" : "points")}</span>
+          <span class="sbk-odds">${picked ? "✔ misé" : "×" + w.odds.toFixed(2)}</span>`;
+        if (!takenW) b.addEventListener("click", () => {
+          selection = { market: "winner", pick: w.pid, odds: w.odds, label: "Vainqueur : " + p.name };
+          panel.querySelectorAll(".sbk-sel, .mk-chip:not(.mk-dope)").forEach(c => c.classList.remove("mk-selected"));
+          b.classList.add("mk-selected");
+          updateForm();
+        });
+        grid.appendChild(b);
+      });
+  }
+  winnerBox.querySelector("#sbk-search").addEventListener("input", e => drawWinners(e.target.value));
+  drawWinners();
+
+  /* ---- 📊 Totaux du tournoi : plus/moins ---- */
+  function ouChip(market, pick, label, odds) {
+    const off = myBets.some(b => b.marketKey === market);
     const b = document.createElement("button");
-    const placed = !!taken && (market === "prop" || taken.pick === pick);
-    b.className = "mk-chip" + (placed ? " mk-placed" : "");
-    b.disabled = !!taken;
-    b.innerHTML = placed
-      ? `${label} <span class="mk-odds">✔ misé</span>`
-      : `${label} <span class="mk-odds">×${odds.toFixed(2)}</span>`;
-    if (!taken) b.addEventListener("click", () => {
-      selection = { market, pick, odds, label };
-      panel.querySelectorAll(".mk-chip").forEach(c => c.classList.remove("mk-selected"));
+    b.className = "mk-chip";
+    b.disabled = off;
+    const placed = off && myBets.some(bb => bb.marketKey === market && bb.pick === pick);
+    if (placed) b.classList.add("mk-placed");
+    b.innerHTML = placed ? `${label} <span class="mk-odds">✔ misé</span>` : `${label} <span class="mk-odds">×${odds.toFixed(2)}</span>`;
+    if (!off) b.addEventListener("click", () => {
+      const mktLabel = market === "oua" ? "Aces du tournoi" : market === "oud" ? "Doubles fautes du tournoi" : "Services gagnés du tournoi";
+      selection = { market, pick, odds, label: mktLabel + " : " + label.toLowerCase() };
+      panel.querySelectorAll(".sbk-sel, .mk-chip:not(.mk-dope)").forEach(c => c.classList.remove("mk-selected"));
       b.classList.add("mk-selected");
       updateForm();
     });
     return b;
   }
-
-  function block(title, chips) {
-    if (!chips.length) return;
-    const div = document.createElement("div");
-    div.className = "mk-block";
-    div.innerHTML = `<div class="mk-title">${title}</div>`;
+  const totBox = document.createElement("div");
+  totBox.className = "sbk-market";
+  totBox.innerHTML = `<div class="sbk-mtitle">📊 Les totaux du tournoi <span class="sbk-mcount">plus / moins</span></div>`;
+  const totRow = (icon, label, market, mkt, unit) => {
     const row = document.createElement("div");
-    row.className = "mk-row";
-    chips.forEach(c => row.appendChild(c));
-    div.appendChild(row);
-    panel.appendChild(div);
-  }
+    row.className = "sbk-total";
+    row.innerHTML = `<span class="sbk-tlabel">${icon} ${label} <span class="sbk-line">ligne à ${frNum(mkt.line)}${unit}</span></span>
+      <span class="sbk-tchips"></span>`;
+    const chips = row.querySelector(".sbk-tchips");
+    chips.appendChild(ouChip(market, "over", `Plus de ${frNum(mkt.line)}${unit}`, mkt.over));
+    chips.appendChild(ouChip(market, "under", `Moins de ${frNum(mkt.line)}${unit}`, mkt.under));
+    totBox.appendChild(row);
+  };
+  totRow("🎯", "Aces du tournoi", "oua", mk.ouAces, "");
+  totRow("😬", "Doubles fautes du tournoi", "oud", mk.ouDf, "");
+  totRow("📈", "% de jeux de service gagnés", "ouh", mk.ouHold, " %");
+  panel.appendChild(totBox);
 
-  block("🏆 Vainqueur du tournoi", mk.winner.map(w => {
-    const p = getPlayer(w.pid);
-    return chip("winner", w.pid, `${flagHTML(p.flag)} ${p.name}`, w.odds);
-  }));
-  if (mk.run) {
-    const cp = customPlayer();
-    block(`🎾 Le parcours de ${cp.name}`, mk.run.map(r => chip("run", r.k, r.label, r.odds)));
-  }
-  block("🎯 Les défis du bookmaker", mk.props.map(pr => chip("prop", pr.code, pr.label, pr.odds)));
-
-  /* Marchés Over/Under et score fréquent */
-  const frNum = x => String(x).replace(".", ",");
-  if (mk.ouFinal) {
-    block(`📏 Nombre de jeux de la finale — ligne à ${frNum(mk.ouFinal.line)}`, [
-      chip("ouf", "over", `Plus de ${frNum(mk.ouFinal.line)} jeux`, mk.ouFinal.over),
-      chip("ouf", "under", `Moins de ${frNum(mk.ouFinal.line)} jeux`, mk.ouFinal.under),
-    ]);
-  }
-  if (mk.ouHold) {
-    block(`📈 % de jeux de service gagnés sur le tournoi — ligne à ${frNum(mk.ouHold.line)} %`, [
-      chip("ouh", "over", `Plus de ${frNum(mk.ouHold.line)} %`, mk.ouHold.over),
-      chip("ouh", "under", `Moins de ${frNum(mk.ouHold.line)} %`, mk.ouHold.under),
-    ]);
-  }
-  if (mk.topScore) {
-    block("🔢 Le score de set le plus fréquent du tournoi (égalité = gagnant)",
-      mk.topScore.map(s => chip("top", s.key, s.key, s.odds)));
-  }
-
-  /* Formulaire de mise */
+  /* ---- Formulaire de mise ---- */
   const form = document.createElement("div");
-  form.className = "mk-form";
+  form.className = "mk-form sbk-form";
   form.innerHTML = `
     <span class="mk-sel" id="mk-sel">Choisis un pari ci-dessus…</span>
     <input type="number" id="mk-stake" min="${TBET_MIN}" step="100" placeholder="Mise €" disabled>
     <span class="mk-gain" id="mk-gain"></span>`;
-  const betBtn = mkBtn("Parier", "btn btn-sm", () => {
+  const betBtn = mkBtn("Parier 🎰", "btn btn-sm", () => {
     try {
       placeTournamentBet(rec.id, selection.market, selection.pick, $("#mk-stake").value);
       navigate("tournament", { id: rec.id, section: viewParams.section });
@@ -968,11 +1233,14 @@ function renderMarketPanel(el, rec) {
     stake.oninput = refreshGain;
   }
 
-  const pl = placedList();
-  if (pl) panel.appendChild(pl);
-  const db = dopingBox();
-  if (db) panel.appendChild(db);
-
+  /* ---- 🎫 Tes paris placés ---- */
+  if (myBets.length) {
+    const box = document.createElement("div");
+    box.className = "mk-block mk-mybets";
+    box.innerHTML = `<div class="mk-title">🎫 Tes paris placés sur ce tournoi</div>` +
+      myBets.map(b => tbetLineHTML(b, true)).join("");
+    panel.appendChild(box);
+  }
   el.appendChild(panel);
 }
 
@@ -1001,18 +1269,43 @@ function renderBracketBody(el, rec, readOnly) {
   nav.appendChild(mkSec(t.cat === "GC" ? "🏆 Phase finale (QF → F)" : "🏆 Phase finale (SF → F)", "final"));
   el.appendChild(nav);
 
+  // v25 : navigation PAR TOUR — revenir sur n'importe quel tour, passé ou à venir
+  const rndNav = document.createElement("div");
+  rndNav.className = "bracket-nav round-nav";
+  rndNav.insertAdjacentHTML("beforeend", `<span class="rn-label">Par tour :</span>`);
+  rec.roundsNames.forEach((rn2, r) => {
+    const b = document.createElement("button");
+    const val = "r" + r;
+    const isCurrent = rec.status === "active" && r === rec.currentRound;
+    b.className = "sec-btn rnd-btn" + (mode === val ? " active" : "") + (isCurrent ? " rnd-current" : "");
+    b.textContent = roundShortLabel(rn2, t.drawSize) + (isCurrent ? " ●" : "");
+    b.addEventListener("click", () => { viewParams.section = val; navigate("tournament", { ...viewParams }); });
+    rndNav.appendChild(b);
+  });
+  el.appendChild(rndNav);
+
   const info = document.createElement("div");
   info.className = "page-sub";
   const rn = rec.roundsNames[Math.min(rec.currentRound, rec.roundsNames.length - 1)];
   info.innerHTML = rec.status === "done"
     ? `Tournoi terminé — vainqueur : <strong>${flagHTML(getPlayer(rec.recap.champion).flag)} ${getPlayer(rec.recap.champion).name}</strong>`
     : `Tour en cours : <strong>${roundShortLabel(rn, t.drawSize)}</strong> — clique sur un match en surbrillance pour le jouer 🎾
-       <span style="color:#b8860b">· « Simuler le tournoi » avance et s'arrête sur chaque match de tes favoris ⭐</span>`;
+       <span style="color:#b8860b">· « Jouer mon club » avance et s'arrête sur chaque match des joueurs de ${clubName()} ⭐</span>`;
   el.appendChild(info);
 
   if (mode === "overview") renderOverview(el, rec, nSections);
   else if (mode === "final") renderBracketColumns(el, rec, sectionRounds, rec.roundsNames.length, null, readOnly);
+  else if (typeof mode === "string" && mode.charAt(0) === "r") renderRoundGrid(el, rec, parseInt(mode.slice(1), 10), readOnly);
   else renderBracketColumns(el, rec, 0, sectionRounds, mode, readOnly);
+}
+
+/* v25 : tous les matchs d'UN tour, en grille (navigation par tour) */
+function renderRoundGrid(el, rec, r, readOnly) {
+  if (!rec.rounds[r]) { navigate("tournament", { id: rec.id }); return; }
+  const grid = document.createElement("div");
+  grid.className = "round-grid";
+  rec.rounds[r].forEach((m, i) => grid.appendChild(matchCard(rec, r, i, readOnly)));
+  el.appendChild(grid);
 }
 
 /* Vue d'ensemble : une carte par section de 16 joueurs */
@@ -1094,16 +1387,112 @@ function renderBracketColumns(el, rec, roundFrom, roundTo, section, readOnly) {
   el.appendChild(scroll);
 }
 
+/* ============================================================
+   RÉCAP D'UN MATCH TERMINÉ — cliquer sur son cartouche dans le
+   tableau rouvre sa fiche : score final, stats détaillées, paris
+   ============================================================ */
+function openMatchSummary(rec, ctx) {
+  const t = CALENDAR[rec.index];
+  let m, roundLabel;
+  if (ctx.kind === "bracket") {
+    m = rec.rounds[ctx.roundIdx][ctx.matchIdx];
+    roundLabel = roundShortLabel(rec.roundsNames[ctx.roundIdx], t.drawSize);
+  } else if (ctx.kind === "rr") {
+    m = rec.rr[ctx.group][ctx.matchIdx];
+    roundLabel = "Journée " + (m.day || 1) + " — Groupe " + (ctx.group === "A" ? "Björn Borg" : "Jimmy Connors");
+  } else if (ctx.kind === "sf") {
+    m = rec.sf[ctx.matchIdx];
+    roundLabel = "Demi-finale";
+  } else {
+    m = rec.final;
+    roundLabel = "FINALE";
+  }
+  if (!m || m.winner === null || m.walkover || !m.score) return;
+
+  // Le joueur du club s'affiche en haut, comme pendant le match
+  const fav1 = state.favorites.includes(m.p1), fav2 = state.favorites.includes(m.p2);
+  const flip = fav2 && !fav1;
+  const idTop = flip ? m.p2 : m.p1, idBot = flip ? m.p1 : m.p2;
+  const pA = getPlayer(idTop), pB = getPlayer(idBot);
+  const fTop = flip ? m.form2 : m.form1, fBot = flip ? m.form1 : m.form2;
+  const fmIco = f => f && FORM_META[f] ? `<span class="form-ico" title="${FORM_META[f].label}">${FORM_META[f].icon}</span>` : "";
+  const setsOf = id => m.score.map((s, i) => {
+    const v = id === m.p1 ? s[0] : s[1];
+    const won = (s[0] > s[1]) === (id === m.p1);
+    const tb = m.tiebreaks && m.tiebreaks[i]
+      ? `<span class="tb-mini">${id === m.p1 ? m.tiebreaks[i][0] : m.tiebreaks[i][1]}</span>` : "";
+    return `<span class="sb-set${won ? " won" : ""}">${v}${tb}</span>`;
+  }).join("");
+  const w = getPlayer(m.winner);
+  const favTop = state.favorites.includes(idTop), favBot = state.favorites.includes(idBot);
+  let bannerCls = "", ico = "🏆", tail = "";
+  if (favTop !== favBot) {
+    const myWon = state.favorites.includes(m.winner);
+    bannerCls = myWon ? " win-banner" : " loss-banner";
+    ico = myWon ? "🎉" : "😞";
+    tail = myWon ? " — VICTOIRE !" : " — défaite…";
+  }
+  const row = (id, p, f) => `
+    <div class="sb-row">
+      <span class="sb-flag">${flagHTML(p.flag)}</span>
+      <span>
+        <span class="sb-name">${rec.seedsMap[id] ? `<span class="seed">[${rec.seedsMap[id]}]</span>` : ""}<span class="name-link" data-pid="${id}" title="Voir la carte de ${p.name}">${p.name}</span>
+          ${fmIco(f)}${state.favorites.includes(id) ? "⭐" : ""}</span>
+        <span class="sb-cat">${p.cat}${f && FORM_META[f] ? " · " + FORM_META[f].label : ""}</span>
+      </span>
+      <span class="sb-sets">${setsOf(id)}</span>
+    </div>`;
+
+  const overlay = $("#modal-overlay");
+  const modal = $("#modal-match");
+  overlay.classList.remove("hidden");
+  modal.innerHTML = `
+    <div class="m-head">
+      <div>
+        <div class="m-round">${roundLabel} — RÉCAP DU MATCH</div>
+        <div class="m-tourney">${flagHTML(t.country)} ${t.name} · ${t.surfaceLabel}${m.when ? ` · 📅 ${matchWhenLabel(rec, m)}` : ""}</div>
+      </div>
+      <button class="m-close" id="ms-close">✕</button>
+    </div>
+    <div class="scoreboard">
+      ${row(idTop, pA, fTop)}
+      <div class="sb-vs-divider"></div>
+      ${row(idBot, pB, fBot)}
+    </div>
+    <div id="m-banner"><div class="m-winner-banner${bannerCls}">${ico} <strong>${flagHTML(w.flag)} ${w.name}</strong> remporte le match ${formatScore(m, true)}${tail}</div></div>
+    <div id="m-stats">${matchStatsHTML(rec, m, flip)}</div>
+    <div id="ms-bets"></div>
+    <div class="m-controls"><button class="btn btn-sm" id="ms-ok">✓ Fermer</button></div>`;
+
+  // Tes paris sur ce match
+  const myBets = betsOnRef(rec, ctxRef(ctx));
+  if (myBets.length) {
+    $("#ms-bets").innerHTML = `<div class="mb-results">` + myBets.map(b => tbetLineHTML(b, true)).join("") + `</div>`;
+  }
+  const close = () => { overlay.classList.add("hidden"); modal.innerHTML = ""; };
+  $("#ms-close").addEventListener("click", close);
+  $("#ms-ok").addEventListener("click", close);
+  overlay.onclick = e => { if (e.target === overlay) close(); };
+  modal.querySelectorAll(".name-link").forEach(el2 =>
+    el2.addEventListener("click", () => openPlayerCard(parseInt(el2.dataset.pid, 10))));
+}
+
 function matchCard(rec, roundIdx, matchIdx, readOnly) {
   const m = rec.rounds[roundIdx][matchIdx];
   const div = document.createElement("div");
   const playable = !readOnly && rec.status === "active" && m.winner === null && m.p1 !== null && m.p2 !== null && roundIdx === rec.currentRound;
   div.className = "b-match" + (playable ? " playable" : "") + (m.winner !== null ? " done-m" : "");
+  if (m.when) div.title = "📅 " + matchWhenLabel(rec, m);
   div.appendChild(matchRow(rec, m, m.p1, true));
   div.appendChild(matchRow(rec, m, m.p2, false));
   if (playable) {
     div.insertAdjacentHTML("beforeend", `<div class="play-hint">▶</div>`);
     div.addEventListener("click", () => openMatchModal(rec, { kind: "bracket", roundIdx, matchIdx }));
+  } else if (m.winner !== null && !m.walkover && m.score) {
+    // v25 : un match terminé rouvre sa fiche récapitulative
+    div.classList.add("summary-able");
+    div.title = "📊 Récap du match" + (m.when ? " · 📅 " + matchWhenLabel(rec, m) : "");
+    div.addEventListener("click", () => openMatchSummary(rec, { kind: "bracket", roundIdx, matchIdx }));
   }
   return div;
 }
@@ -1139,11 +1528,6 @@ function matchRow(rec, m, pid, isP1) {
   row.innerHTML = `${seed}<span class="p-flag">${flagHTML(p.flag)}</span>
     <span class="p-name">${p.name}${qBadge}${isWinner ? " ✓" : ""}</span>${fIcon}${fav}
     <span class="p-score">${score}</span>`;
-  if (m.winner !== null) {
-    row.classList.add("row-clickable");
-    row.title = "Voir la carte de " + p.name;
-    row.addEventListener("click", e => { e.stopPropagation(); openPlayerCard(pid); });
-  }
   return row;
 }
 
@@ -1183,14 +1567,14 @@ function simulateWholeFinals(rec) {
   while (rec.status === "active" && guard++ < 40) simulateFinalsPhase(rec, true);
 }
 
-/* Prochain match à jouer impliquant un joueur parié (tour/phase en cours) */
-function findNextBetMatch(rec) {
+/* Prochain match à jouer : ceux de mes favoris par défaut, TOUS les matchs si `any` */
+function findNextBetMatch(rec, any) {
   if (rec.status !== "active") return null;
   if (rec.type === "bracket") {
     const r = rec.currentRound;
     for (let i = 0; i < rec.rounds[r].length; i++) {
       const m = rec.rounds[r][i];
-      if (m.winner === null && m.p1 !== null && m.p2 !== null && isBetMatch(m))
+      if (m.winner === null && m.p1 !== null && m.p2 !== null && (any || isBetMatch(m)))
         return { kind: "bracket", roundIdx: r, matchIdx: i };
     }
     return null;
@@ -1287,7 +1671,8 @@ function renderFinalsBody(el, rec, readOnly) {
       rec.rr[g].forEach((m, i) => {
         if ((m.day || 1) !== day) return;
         const card = finalsMatchCard(rec, m, () => openMatchModal(rec, { kind: "rr", group: g, matchIdx: i }),
-          !readOnly && rec.phase === "rr" && m.winner === null && finalsDayPlayable(rec, day));
+          !readOnly && rec.phase === "rr" && m.winner === null && finalsDayPlayable(rec, day),
+          { kind: "rr", group: g, matchIdx: i });
         rrDiv.appendChild(card);
       });
     });
@@ -1312,7 +1697,8 @@ function renderFinalsBody(el, rec, readOnly) {
   sfWrap.className = "b-matches";
   rec.sf.forEach((m, i) => {
     sfWrap.appendChild(finalsMatchCard(rec, m, () => openMatchModal(rec, { kind: "sf", matchIdx: i }),
-      !readOnly && rec.phase === "sf" && m.winner === null && m.p1 !== null));
+      !readOnly && rec.phase === "sf" && m.winner === null && m.p1 !== null,
+      { kind: "sf", matchIdx: i }));
   });
   sfCol.appendChild(sfWrap);
   const fCol = document.createElement("div");
@@ -1321,20 +1707,26 @@ function renderFinalsBody(el, rec, readOnly) {
   const fWrap = document.createElement("div");
   fWrap.className = "b-matches";
   fWrap.appendChild(finalsMatchCard(rec, rec.final, () => openMatchModal(rec, { kind: "final" }),
-    !readOnly && rec.phase === "final" && rec.final.winner === null && rec.final.p1 !== null));
+    !readOnly && rec.phase === "final" && rec.final.winner === null && rec.final.p1 !== null,
+    { kind: "final" }));
   fCol.appendChild(fWrap);
   ko.append(sfCol, fCol);
   el.appendChild(ko);
 }
 
-function finalsMatchCard(rec, m, onPlay, playable) {
+function finalsMatchCard(rec, m, onPlay, playable, summaryCtx) {
   const div = document.createElement("div");
   div.className = "b-match" + (playable ? " playable" : "") + (m.winner !== null ? " done-m" : "");
+  if (m.when) div.title = "📅 " + matchWhenLabel(rec, m);
   div.appendChild(matchRow(rec, m, m.p1, true));
   div.appendChild(matchRow(rec, m, m.p2, false));
   if (playable) {
     div.insertAdjacentHTML("beforeend", `<div class="play-hint">▶</div>`);
     div.addEventListener("click", onPlay);
+  } else if (summaryCtx && m.winner !== null && !m.walkover && m.score) {
+    div.classList.add("summary-able");
+    div.title = "📊 Récap du match" + (m.when ? " · 📅 " + matchWhenLabel(rec, m) : "");
+    div.addEventListener("click", () => openMatchSummary(rec, summaryCtx));
   }
   return div;
 }
@@ -1343,11 +1735,126 @@ function finalsMatchCard(rec, m, onPlay, playable) {
    FENÊTRE DE MATCH — simulation jeu par jeu animée
    ============================================================ */
 let matchAnim = null;
+let playAllMode = false; // true : « Jouer le tournoi » (tous les matchs à la main)
+
+/* ---------- Récap statistique de fin de match (v21) ---------- */
+function matchStatsHTML(rec, m, flip) {
+  const st = m.stats;
+  if (!st) return "";
+  const i = flip ? 1 : 0, j = 1 - i;
+  const bp = m.bp || [[0, 0], [0, 0]];
+  const conv = [bp[0][0], bp[1][0]], saved = [bp[0][1], bp[1][1]];
+  const chances = [conv[0] + saved[1], conv[1] + saved[0]];
+  const faced = [saved[0] + conv[1], saved[1] + conv[0]];
+  const h = Math.floor(st.mins / 60), mn = st.mins % 60;
+  const pctD = (x, y) => (y > 0 ? Math.round(100 * x / y) + " %" : "—");
+  const rows = [];
+  const row = (label, dA, dB, nA, nB, hiGood) => rows.push(`
+    <div class="ms-row">
+      <span class="ms-v ${nA !== nB && ((nA > nB) === hiGood) ? "ms-best" : ""}">${dA}</span>
+      <span class="ms-l">${label}</span>
+      <span class="ms-v ${nA !== nB && ((nB > nA) === hiGood) ? "ms-best" : ""}">${dB}</span>
+    </div>`);
+  row("Points gagnés", st.ptsWon[i], st.ptsWon[j], st.ptsWon[i], st.ptsWon[j], true);
+  const fsr = k => (st.fs[k][1] > 0 ? st.fs[k][0] / st.fs[k][1] : 0);
+  row("% de 1res balles", pctD(st.fs[i][0], st.fs[i][1]), pctD(st.fs[j][0], st.fs[j][1]), fsr(i), fsr(j), true);
+  row("Aces", st.aces[i], st.aces[j], st.aces[i], st.aces[j], true);
+  row("Doubles fautes", st.df[i], st.df[j], st.df[i], st.df[j], false);
+  row("Points gagnants", st.win[i], st.win[j], st.win[i], st.win[j], true);
+  row("Fautes directes", st.ue[i], st.ue[j], st.ue[i], st.ue[j], false);
+  const cvr = k => (chances[k] > 0 ? conv[k] / chances[k] : 0);
+  row("Balles de break converties", `${conv[i]}/${chances[i]} (${pctD(conv[i], chances[i])})`, `${conv[j]}/${chances[j]} (${pctD(conv[j], chances[j])})`, cvr(i), cvr(j), true);
+  const svr = k => (faced[k] > 0 ? saved[k] / faced[k] : 0);
+  row("Balles de break sauvées", `${saved[i]}/${faced[i]} (${pctD(saved[i], faced[i])})`, `${saved[j]}/${faced[j]} (${pctD(saved[j], faced[j])})`, svr(i), svr(j), true);
+  row("Points consécutifs (max)", st.streakPts[i], st.streakPts[j], st.streakPts[i], st.streakPts[j], true);
+  row("Jeux consécutifs (max)", st.streakGames[i], st.streakGames[j], st.streakGames[i], st.streakGames[j], true);
+  row("Balles de set sauvées", st.spSaved[i], st.spSaved[j], st.spSaved[i], st.spSaved[j], true);
+  row("Balles de match sauvées", st.mpSaved[i], st.mpSaved[j], st.mpSaved[i], st.mpSaved[j], true);
+  return `<div class="match-stats">
+    <div class="ms-head"><span>📊 Statistiques du match</span>
+      <span class="ms-meta">⏱ ${h}h${mn < 10 ? "0" + mn : mn}${m.when ? " · 📅 " + matchWhenLabel(rec, m) : ""}</span></div>
+    ${rows.join("")}
+  </div>`;
+}
+
+/* ---------- Écran de transition entre deux tours ---------- */
+function showRoundTransition(rec, ctx) {
+  const t = CALENDAR[rec.index];
+  const overlay = $("#modal-overlay");
+  const modal = $("#modal-match");
+  overlay.classList.remove("hidden");
+
+  let doneLabel, nextLabel;
+  if (rec.type === "bracket") {
+    doneLabel = roundShortLabel(rec.roundsNames[ctx.roundIdx], t.drawSize);
+    nextLabel = roundShortLabel(rec.roundsNames[rec.currentRound], t.drawSize);
+  } else {
+    doneLabel = ctx.kind === "rr" ? "Poules" : "Demi-finales";
+    nextLabel = rec.phase === "sf" ? "Demi-finales" : "Finale";
+  }
+  // Qui est encore en lice pour le tour suivant ?
+  let nextIds = [];
+  if (rec.type === "bracket") {
+    rec.rounds[rec.currentRound].forEach(mm => {
+      if (mm.p1 !== null) nextIds.push(mm.p1);
+      if (mm.p2 !== null) nextIds.push(mm.p2);
+    });
+  } else if (rec.phase === "sf") {
+    rec.sf.forEach(mm => { if (mm.p1 !== null) nextIds.push(mm.p1); if (mm.p2 !== null) nextIds.push(mm.p2); });
+  } else {
+    if (rec.final.p1 !== null) nextIds.push(rec.final.p1);
+    if (rec.final.p2 !== null) nextIds.push(rec.final.p2);
+  }
+  const favLines = state.favorites.map(pid => {
+    if (!rec.entrants.includes(pid)) return "";
+    const p = getPlayer(pid);
+    const alive = nextIds.includes(pid);
+    return `<div class="rt-fav ${alive ? "rt-alive" : "rt-out"}">${alive ? "✅" : "❌"} ${flagHTML(p.flag)} ${p.name}${alive ? "" : " — éliminé"}</div>`;
+  }).join("");
+
+  modal.innerHTML = `
+    <div class="m-head">
+      <div>
+        <div class="m-round">TRANSITION</div>
+        <div class="m-tourney">${flagHTML(t.country)} ${t.name} · ${t.surfaceLabel}</div>
+      </div>
+      <button class="m-close" id="rt-close">✕</button>
+    </div>
+    <div class="round-transition">
+      <div class="rt-done">🏁 ${doneLabel} — terminé !</div>
+      <div class="rt-next">Place ${nextLabel === "Finale" ? "à la" : /tour$/.test(nextLabel) ? "au" : "aux"} <strong>${nextLabel}</strong>
+        <span class="rt-count">· ${nextIds.length} joueur${nextIds.length > 1 ? "s" : ""} en lice</span></div>
+      ${favLines ? `<div class="rt-favs"><div class="rt-favs-title">🎾 ${clubName()}</div>${favLines}</div>` : ""}
+      <div class="rt-actions">
+        <button class="btn" id="rt-favs-go">🎾 Jouer mon club</button>
+        <button class="btn btn-ghost" id="rt-all-go">🎾 Jouer le tournoi</button>
+        <button class="btn btn-ghost" id="rt-board">🎰 Parier sur ce tour</button>
+      </div>
+    </div>`;
+
+  function closeRT(view, params) {
+    overlay.classList.add("hidden");
+    modal.innerHTML = "";
+    navigate(view || "tournament", params || { id: rec.id });
+  }
+  $("#rt-close").addEventListener("click", () => closeRT());
+  $("#rt-board").addEventListener("click", () => closeRT());
+  $("#rt-favs-go").addEventListener("click", () => {
+    playAllMode = false;
+    const nm = advanceToNextBetMatch(rec);
+    if (rec.status === "done") { closeRT("recap"); return; }
+    if (nm) openMatchModal(rec, nm); else closeRT();
+  });
+  $("#rt-all-go").addEventListener("click", () => {
+    playAllMode = true;
+    const nm = findNextBetMatch(rec, true);
+    if (nm) openMatchModal(rec, nm); else closeRT(rec.status === "done" ? "recap" : "tournament");
+  });
+}
 
 function openMatchModal(rec, ctx) {
   const t = CALENDAR[rec.index];
-  // Le match n'est PAS joué tout de suite : le joueur choisit le mode
-  // (▶ classique, ou 🔥 Hot Points pour les matchs de son champion)
+  // Le match n'est PAS joué tout de suite : on peut d'abord parier dessus 🎰
   let m, roundLabel, playFn;
   if (ctx.kind === "bracket") {
     m = rec.rounds[ctx.roundIdx][ctx.matchIdx];
@@ -1368,11 +1875,29 @@ function openMatchModal(rec, ctx) {
   }
   if (!m || m.winner !== null || m.p1 === null || m.p2 === null) return;
 
-  const pA = getPlayer(m.p1), pB = getPlayer(m.p2);
-  const cpHot = customPlayer();
-  const isChampMatch = !!(cpHot && (m.p1 === cpHot.id || m.p2 === cpHot.id));
+  // Mon favori s'affiche toujours EN HAUT (sauf duel entre deux favoris : ordre du tableau).
+  // Le moteur garde p1/p2 : seul l'AFFICHAGE est retourné (flipEvent traduit les événements).
+  const fav1 = state.favorites.includes(m.p1), fav2 = state.favorites.includes(m.p2);
+  const flip = fav2 && !fav1;
+  const idTop = flip ? m.p2 : m.p1, idBot = flip ? m.p1 : m.p2;
+  function flipEvent(ev) {
+    if (!flip) return ev;
+    const e = Object.assign({}, ev);
+    const sw = s => (s === "A" ? "B" : s === "B" ? "A" : s);
+    if (e.server !== undefined) e.server = sw(e.server);
+    if (e.winner !== undefined) e.winner = sw(e.winner);
+    if (e.gA !== undefined) { const g = e.gA; e.gA = e.gB; e.gB = g; }
+    if (e.pa !== undefined) { const p = e.pa; e.pa = e.pb; e.pb = p; }
+    if (e.score) e.score = [e.score[1], e.score[0]];
+    if (e.setsA !== undefined) { const s2 = e.setsA; e.setsA = e.setsB; e.setsB = s2; }
+    return e;
+  }
+
+  const pA = getPlayer(idTop), pB = getPlayer(idBot);
+  const cp0 = customPlayer();
+  const isChampMatch = !!(cp0 && (m.p1 === cp0.id || m.p2 === cp0.id)); // on ne parie pas sur soi-même
   // Forme au moment du match (identique à ce que le moteur enregistrera)
-  const f1 = formStatus(m.p1, rec), f2 = formStatus(m.p2, rec);
+  const f1 = formStatus(idTop, rec), f2 = formStatus(idBot, rec);
   const fmIco = f => f && FORM_META[f] ? `<span class="form-ico" title="${FORM_META[f].label}">${FORM_META[f].icon}</span>` : "";
   const isFinalMatch = ctx.kind === "final" || (ctx.kind === "bracket" && rec.rounds && ctx.roundIdx === rec.rounds.length - 1);
   const bestOf = t.bestOf;
@@ -1385,7 +1910,7 @@ function openMatchModal(rec, ctx) {
     <div class="m-head">
       <div>
         <div class="m-round">${roundLabel}</div>
-        <div class="m-tourney">${flagHTML(t.country)} ${t.name} · ${t.surfaceLabel}</div>
+        <div class="m-tourney">${flagHTML(t.country)} ${t.name} · ${t.surfaceLabel}${m.when ? ` · 📅 ${matchWhenLabel(rec, m)}` : ""}</div>
       </div>
       <button class="m-close" id="m-close">✕</button>
     </div>
@@ -1393,9 +1918,9 @@ function openMatchModal(rec, ctx) {
       <div class="sb-row" id="sb-A">
         <span class="sb-flag">${flagHTML(pA.flag)}</span>
         <span>
-          <span class="sb-name">${rec.seedsMap[m.p1] ? `<span class="seed">[${rec.seedsMap[m.p1]}]</span>` : ""}<span class="name-link" id="link-A" title="Voir la carte de ${pA.name}">${pA.name}</span>
-            ${fmIco(f1)}${state.favorites.includes(m.p1) ? "⭐" : ""}<span class="serve-dot hidden" id="serve-A"></span></span>
-          <span class="sb-cat">n°${currentRank(m.p1, "points")} à la race · ${pA.cat}${f1 && FORM_META[f1] ? " · " + FORM_META[f1].label : ""}</span>
+          <span class="sb-name">${rec.seedsMap[idTop] ? `<span class="seed">[${rec.seedsMap[idTop]}]</span>` : ""}<span class="name-link" id="link-A" title="Voir la carte de ${pA.name}">${pA.name}</span>
+            ${fmIco(f1)}${state.favorites.includes(idTop) ? "⭐" : ""}<span class="serve-dot hidden" id="serve-A"></span></span>
+          <span class="sb-cat">n°${currentRank(idTop, "points")} à la race · ${pA.cat}${f1 && FORM_META[f1] ? " · " + FORM_META[f1].label : ""}</span>
         </span>
         <span class="sb-sets" id="sets-A"></span>
       </div>
@@ -1403,15 +1928,16 @@ function openMatchModal(rec, ctx) {
       <div class="sb-row" id="sb-B">
         <span class="sb-flag">${flagHTML(pB.flag)}</span>
         <span>
-          <span class="sb-name">${rec.seedsMap[m.p2] ? `<span class="seed">[${rec.seedsMap[m.p2]}]</span>` : ""}<span class="name-link" id="link-B" title="Voir la carte de ${pB.name}">${pB.name}</span>
-            ${fmIco(f2)}${state.favorites.includes(m.p2) ? "⭐" : ""}<span class="serve-dot hidden" id="serve-B"></span></span>
-          <span class="sb-cat">n°${currentRank(m.p2, "points")} à la race · ${pB.cat}${f2 && FORM_META[f2] ? " · " + FORM_META[f2].label : ""}</span>
+          <span class="sb-name">${rec.seedsMap[idBot] ? `<span class="seed">[${rec.seedsMap[idBot]}]</span>` : ""}<span class="name-link" id="link-B" title="Voir la carte de ${pB.name}">${pB.name}</span>
+            ${fmIco(f2)}${state.favorites.includes(idBot) ? "⭐" : ""}<span class="serve-dot hidden" id="serve-B"></span></span>
+          <span class="sb-cat">n°${currentRank(idBot, "points")} à la race · ${pB.cat}${f2 && FORM_META[f2] ? " · " + FORM_META[f2].label : ""}</span>
         </span>
         <span class="sb-sets" id="sets-B"></span>
       </div>
     </div>
-    <div id="hot-panel" class="hidden"></div>
+    <div id="m-bet"></div>
     <div id="m-banner"></div>
+    <div id="m-stats"></div>
     <div id="m-next"></div>
     <div class="m-controls">
       <button class="btn btn-sm" id="m-play">▶ Lancer le match</button>
@@ -1421,10 +1947,27 @@ function openMatchModal(rec, ctx) {
         <button class="speed-btn" data-speed="100">Turbo</button>
         <button class="speed-btn" data-speed="0">Instantané</button>
       </div>
-      ${isChampMatch ? `<button class="btn btn-sm btn-hot" id="m-hot"
-        title="Mode turbo : la simulation s'arrête sur chaque point chaud (balles de break, de set, de match, tie-breaks) et c'est TOI qui choisis le coup">🔥 Hot points</button>` : ""}
     </div>
     <div class="m-commentary" id="m-com"></div>`;
+
+  /* 🎰 Paris sur CE match : boîte de marchés avant le coup d'envoi */
+  const betRef = ctxRef(ctx);
+  function matchBetsList() { return betsOnRef(rec, betRef); }
+  function refreshBetBox() {
+    renderMatchBetBox($("#m-bet"), rec, betRef, () => { refreshBetBox(); updateBankChip(); });
+  }
+  function showMatchBetsCompact() {
+    const open = matchBetsList().filter(b => b.status === "open");
+    $("#m-bet").innerHTML = open.length
+      ? `<div class="mb-inplay">🎫 En jeu sur ce match : ${open.map(b =>
+          `<span class="tbet-chip">${b.combo ? "Combiné ×" + b.legs.length : b.label} · ${fmtEuro(b.stake)} ×${b.odds.toFixed(2)}</span>`).join(" ")}</div>` : "";
+  }
+  function showMatchBetResults() {
+    const mine = matchBetsList();
+    if (!mine.length) { $("#m-bet").innerHTML = ""; return; }
+    $("#m-bet").innerHTML = `<div class="mb-results">` + mine.map(b => tbetLineHTML(b, true)).join("") + `</div>`;
+  }
+  if (!isChampMatch) refreshBetBox();
 
   /* État de replay — la vitesse choisie est mémorisée pour les matchs suivants */
   const savedSpeed = typeof state.matchSpeed === "number" ? state.matchSpeed : 650;
@@ -1493,27 +2036,31 @@ function openMatchModal(rec, ctx) {
       replay.curSet = [0, 0];
       const sName = ev.winner === "A" ? pA.name : pB.name;
       comment(`🏁 <strong>SET ${sName}</strong> ${ev.score[0]}-${ev.score[1]} — ${ev.setsA} set${ev.setsA > 1 ? "s" : ""} à ${ev.setsB}`, "set-line");
-    } else if (ev.t === "hot") {
-      comment(`🔥 <strong>${ev.label}</strong>${ev.forChamp === null || ev.forChamp === undefined ? "" : ev.forChamp ? " — pour toi !" : " — contre toi…"}
-        <span class="com-score">${ev.score}</span>`, "hot-line");
-    } else if (ev.t === "hotres") {
-      comment(ev.champWins
-        ? (ev.ace ? `🎯 <strong>ACE !</strong> Point pour toi` : `✅ <strong>Point gagné</strong> — ${ev.icon} ${ev.label}`)
-        : `❌ <strong>Point perdu</strong> — ${ev.icon} ${ev.label}`,
-        ev.champWins ? "hotres-win" : "hotres-loss");
     } else if (ev.t === "end") {
       replay.finished = true;
       const wName = ev.winner === "A" ? pA : pB;
       const scoreStr = formatScore(m, true);
-      $("#m-banner").innerHTML = `<div class="m-winner-banner">🏆 <strong>${flagHTML(wName.flag)} ${wName.name}</strong> remporte le match ${scoreStr}</div>`;
+      // Bandeau VERT si mon favori gagne, ROUGE s'il perd (neutre si duel de favoris ou sans favori)
+      const favTop = state.favorites.includes(idTop), favBot = state.favorites.includes(idBot);
+      let bannerCls = "", bannerIco = "🏆", bannerTail = "";
+      if (favTop !== favBot) {
+        const myWon = (ev.winner === "A") === favTop;
+        bannerCls = myWon ? " win-banner" : " loss-banner";
+        bannerIco = myWon ? "🎉" : "😞";
+        bannerTail = myWon ? " — VICTOIRE !" : " — défaite…";
+      }
+      $("#m-banner").innerHTML = `<div class="m-winner-banner${bannerCls}">${bannerIco} <strong>${flagHTML(wName.flag)} ${wName.name}</strong> remporte le match ${scoreStr}${bannerTail}</div>`;
       comment(`🏆 Victoire de <strong>${wName.name}</strong>`, "set-line");
+      $("#m-stats").innerHTML = matchStatsHTML(rec, m, flip); // v21 : récap statistique
+      showMatchBetResults(); // 🎰 le verdict de tes paris sur ce match
+      updateBankChip();      // le solde bouge en direct
       hideServers();
       if (isFinalMatch) launchConfetti();
       const playBtn = $("#m-play");
       playBtn.disabled = false;
       playBtn.textContent = "✓ Fermer";
       playBtn.onclick = closeModal;
-      // Enchaînement : match suivant de mes paris / tour suivant / récap
+      // Enchaînement : match suivant / transition de tour / récap
       const nextWrap = $("#m-next");
       nextWrap.innerHTML = "";
       if (rec.status === "done") {
@@ -1521,18 +2068,31 @@ function openMatchModal(rec, ctx) {
           stopTimer(); overlay.classList.add("hidden"); navigate("recap", { id: rec.id });
         }));
       } else {
-        const nm = findNextBetMatch(rec);
+        // Le tour vient-il de se terminer ? -> écran de transition
+        const roundDone = rec.type === "bracket"
+          ? rec.currentRound !== ctx.roundIdx
+          : (ctx.kind === "rr" ? rec.phase !== "rr" : ctx.kind === "sf" ? rec.phase !== "sf" : false);
+        if (roundDone) {
+          nextWrap.appendChild(mkBtn("🏁 Fin du tour — continuer", "btn btn-gold", () => {
+            stopTimer(); showRoundTransition(rec, ctx);
+          }));
+          return redraw();
+        }
+        const nm = findNextBetMatch(rec, playAllMode);
         if (nm) {
-          const label = rec.type === "finals" ? "🎾 Match suivant" : "⭐ Match suivant de mes favoris";
+          const label = playAllMode || rec.type === "finals" ? "🎾 Match suivant" : "⭐ Prochain match de mon club";
           nextWrap.appendChild(mkBtn(label, "btn", () => {
             stopTimer(); openMatchModal(rec, nm);
           }));
         } else {
-          nextWrap.appendChild(mkBtn("⏩ Tour suivant", "btn", () => {
+          // Plus de match de mes favoris dans ce tour : on termine le tour (simulation)
+          // puis l'écran de transition présente le tour suivant
+          nextWrap.appendChild(mkBtn("🏁 Fin du tour — continuer", "btn btn-gold", () => {
             stopTimer();
-            const nm2 = advanceToNextBetMatch(rec);
-            if (nm2) openMatchModal(rec, nm2);
-            else { overlay.classList.add("hidden"); navigate(rec.status === "done" ? "recap" : "tournament", { id: rec.id }); }
+            if (rec.type === "bracket") simulateCurrentRound(rec, true);
+            else simulateFinalsPhase(rec, true);
+            if (rec.status === "done") { overlay.classList.add("hidden"); navigate("recap", { id: rec.id }); return; }
+            showRoundTransition(rec, ctx);
           }));
         }
       }
@@ -1568,75 +2128,12 @@ function openMatchModal(rec, ctx) {
   $("#m-play").addEventListener("click", function onPlay() {
     const res = playFn(); // le moteur joue le match maintenant (mode classique)
     if (!res) { closeModal(); return; }
-    replay.events = res.timeline;
+    replay.events = res.timeline.map(flipEvent); // mon favori reste en haut à l'écran
     this.textContent = "⏸ En cours…";
     this.disabled = true;
-    const hb = $("#m-hot");
-    if (hb) hb.disabled = true;
+    showMatchBetsCompact(); // les marchés ferment : tes tickets restent visibles
     start();
   }, { once: true });
-
-  /* 🔥 MODE HOT POINTS : simulation point par point, arrêts sur les points chauds */
-  if (isChampMatch) {
-    $("#m-hot").addEventListener("click", function onHot() {
-      this.disabled = true;
-      $("#m-play").disabled = true;
-      $("#m-play").textContent = "🔥 Hot points…";
-      modal.querySelector(".speed-group").classList.add("hidden");
-      replay.started = true;
-      redraw();
-      // Forme des deux joueurs figée au coup d'envoi (comme en mode classique)
-      m.form1 = formStatus(m.p1, rec);
-      m.form2 = formStatus(m.p2, rec);
-      const hotCtl = createHotMatch(m.p1, m.p2, rec);
-      let queue = [];
-      function drainThen(cb) {
-        stopTimer();
-        replay.timer = setInterval(() => {
-          if (queue.length === 0) { stopTimer(); cb(); return; }
-          applyEvent(queue.shift());
-        }, 130);
-      }
-      function handle(r) {
-        queue = queue.concat(hotCtl.takeEvents());
-        drainThen(() => {
-          if (r.type === "pause") showHotPanel(r.hot);
-          else {
-            commitHotMatch(rec, ctx, r.res); // résultat + stats hot enregistrés
-            applyEvent({ t: "end", winner: r.res.winner === m.p1 ? "A" : "B" });
-          }
-        });
-      }
-      function showHotPanel(h) {
-        const panel = $("#hot-panel");
-        const who = h.forChamp === null || h.forChamp === undefined ? ""
-          : h.forChamp ? ` <span class="hp-for">pour toi 🔥</span>` : ` <span class="hp-against">contre toi 😨</span>`;
-        panel.className = "hot-panel hot-" + h.kind;
-        panel.innerHTML = `
-          <div class="hp-head">
-            <span class="hp-kind">${h.kind === "mp" ? "🏆" : h.kind === "sp" ? "🎯" : h.kind === "bp" ? "💥" : "🔥"} ${h.label}${who}</span>
-            <span class="hp-score">${h.score}</span>
-            <span class="hp-serve">${h.champServing ? "🎾 Tu sers — choisis ton coup :" : "↩️ Tu relances — choisis ton coup :"}</span>
-          </div>
-          <div class="hp-options"></div>
-          <div class="hp-hint">Varier ses coups paie : à force de répéter, l'adversaire lit ton jeu (selon vos Tactiques).</div>`;
-        const opts = panel.querySelector(".hp-options");
-        h.options.forEach(o => {
-          const b = document.createElement("button");
-          b.className = "hp-shot";
-          b.innerHTML = `<span class="hs-ico">${o.icon}</span><span class="hs-name">${o.label}</span><span class="hs-skill">${o.skillLabel} ${o.value}</span>`;
-          b.addEventListener("click", () => {
-            panel.className = "hidden";
-            panel.innerHTML = "";
-            handle(hotCtl.choose(o.key));
-          });
-          opts.appendChild(b);
-        });
-        panel.scrollIntoView({ block: "nearest" });
-      }
-      handle(hotCtl.advance());
-    }, { once: true });
-  }
 
   $$(".speed-btn").forEach(b => b.addEventListener("click", () => {
     $$(".speed-btn").forEach(x => x.classList.remove("active"));
@@ -1658,8 +2155,8 @@ function openMatchModal(rec, ctx) {
   $("#m-close").addEventListener("click", closeModal);
   overlay.onclick = e => { if (e.target === overlay) closeModal(); };
   // Consulter la fiche des joueurs avant (ou pendant) le match
-  $("#link-A").addEventListener("click", () => openPlayerCard(m.p1));
-  $("#link-B").addEventListener("click", () => openPlayerCard(m.p2));
+  $("#link-A").addEventListener("click", () => openPlayerCard(idTop));
+  $("#link-B").addEventListener("click", () => openPlayerCard(idBot));
 
   redraw();
 }
@@ -1739,67 +2236,41 @@ function renderRecap(el, tid) {
   top.appendChild(table);
   grid.appendChild(top);
 
-  /* Bloc paris */
+  /* Bloc paris : tous tes paris sur ce tournoi (matchs, tours, tournoi) */
   const right = document.createElement("div");
   right.className = "card recap-block";
-  right.innerHTML = `<h3>💶 Tes paris sur ce tournoi</h3>`;
-  const favT = document.createElement("table");
-  favT.className = "data";
-  favT.innerHTML = `<thead><tr><th>Pari</th><th>Résultat</th><th class="num">Prize</th><th class="num">Pour ta cagnotte</th></tr></thead>`;
-  const favB = document.createElement("tbody");
-  let recapGain = 0;
-  state.bets.forEach(bet => {
-    const p = getPlayer(bet.pid);
-    const r = rec.recap.results[bet.pid];
-    const tr = document.createElement("tr");
-    tr.className = "row-clickable";
-    tr.addEventListener("click", () => openPlayerCard(bet.pid));
-    if (bet.sold && bet.sold.atIndex <= rec.index) {
-      tr.innerHTML = `<td><div class="player-cell"><span class="pc-flag">${flagHTML(p.flag)}</span><span>${p.name}</span></div></td>
-        <td colspan="3" style="color:#b8860b">💰 Pari revendu au bookmaker</td>`;
-      favB.appendChild(tr);
-      return;
-    }
-    if (r) {
-      const label = r.round === "W" ? "🏆 Vainqueur" : r.round === "F" ? "Finaliste"
-        : rec.type === "finals" ? (r.round === "SF" ? "Demi-finaliste" : `${r.rrWins} v. en poule`)
-        : roundShortLabel(r.round, t.drawSize);
-      const gain = bet.amount * r.money / state.refs[bet.pid];
-      recapGain += gain;
-      tr.innerHTML = `<td><div class="player-cell"><span class="pc-flag">${flagHTML(p.flag)}</span><span>${p.name}</span></div></td>
-        <td>${label}</td><td class="num">${fmtEuro(r.money)}</td>
-        <td class="num"><strong style="color:var(--green)">+${fmtEuro(Math.round(gain))}</strong></td>`;
-    } else {
-      tr.innerHTML = `<td><div class="player-cell"><span class="pc-flag">${flagHTML(p.flag)}</span><span>${p.name}</span></div></td>
-        <td colspan="3" style="color:#9aa7ba">Non qualifié pour ce tournoi</td>`;
-    }
-    favB.appendChild(tr);
-  });
-  favT.appendChild(favB);
-  right.appendChild(favT);
-  right.insertAdjacentHTML("beforeend", `<p style="font-size:13px;margin-top:8px">
-    Cagnotte : <strong>+${fmtEuro(Math.round(recapGain))}</strong> sur ce tournoi ·
-    solde total : <strong>${fmtEuro(Math.round(bankNow()))}</strong></p>`);
-
-  /* Résultats des paris de tournoi */
-  const tbets = (rec.recap.tbets || []);
-  if (tbets.length) {
-    const net = tbets.reduce((s, b) => s + (b.payout || 0) - b.stake, 0);
-    right.insertAdjacentHTML("beforeend", `<h3 style="margin-top:14px">🎰 Tes paris du tournoi</h3>`);
-    tbets.forEach(b => {
-      right.insertAdjacentHTML("beforeend", `
-        <div class="tbet-line tbet-${b.status}">
-          <span class="tbet-status">${b.status === "won" ? "✅" : "❌"}</span>
-          <span class="tbet-body">
-            <span class="tbet-label">${b.label}</span>
-            <span class="tbet-meta">mise ${fmtEuro(b.stake)} · cote ×${b.odds.toFixed(2)}</span>
-            ${b.result ? `<span class="tbet-result">→ ${b.result}</span>` : ""}
-          </span>
-          <span class="tbet-payout">${b.status === "won" ? "+" + fmtEuro(b.payout) : "−" + fmtEuro(b.stake)}</span>
-        </div>`);
-    });
+  right.innerHTML = `<h3>🎰 Tes paris sur ce tournoi</h3>`;
+  const allBets = (state.tbets || []).filter(b => b.tourneyId === rec.id);
+  if (!allBets.length) {
+    right.insertAdjacentHTML("beforeend", `<div class="bet-empty" style="color:var(--text-dim)">
+      Aucun pari placé sur ce tournoi — le guichet rouvre au prochain. 🎰</div>`);
+  } else {
+    allBets.forEach(b => right.insertAdjacentHTML("beforeend", tbetLineHTML(b, true)));
+    const net = allBets.reduce((s, b) => s + (b.payout || 0) - b.stake, 0);
     right.insertAdjacentHTML("beforeend", `<p style="font-size:13px;margin-top:6px">
-      Bilan des paris de tournoi : <strong style="color:${net >= 0 ? "var(--green)" : "var(--red)"}">${net >= 0 ? "+" : "−"}${fmtEuro(Math.abs(net))}</strong></p>`);
+      Bilan du tournoi : <strong style="color:${net >= 0 ? "var(--green)" : "var(--red)"}">${net >= 0 ? "+" : "−"}${fmtEuro(Math.abs(Math.round(net)))}</strong>
+      · 💶 Solde : <strong>${fmtEuro(Math.round(state.cash || 0))}</strong></p>`);
+  }
+
+  /* 💶 Ton relevé du tournoi : prize net crédité, frais débités */
+  const cpR = customPlayer();
+  const fin = rec.recap.finance;
+  if (fin && fin.absent) {
+    right.insertAdjacentHTML("beforeend", `
+      <h3 style="margin-top:14px">💶 Ton relevé du tournoi</h3>
+      <div class="bet-empty" style="color:var(--text-dim)">💤 ${cpR ? cpR.name : "Ton champion"} n'était pas engagé —
+        aucun prize money, et <strong>aucune quote-part de frais débitée</strong>.</div>`);
+  } else if (fin) {
+    right.insertAdjacentHTML("beforeend", `
+      <h3 style="margin-top:14px">💶 Ton relevé du tournoi</h3>
+      <div class="fiscal-rows">
+        <div class="f-row"><span>🎾 Prize money${cpR ? " de " + cpR.name : ""} (brut)</span><span>${fmtEuro(fin.prize)}</span></div>
+        <div class="f-row f-tax"><span>Taxes (${Math.round(PRIZE_TAX_RATE * 100)} %)</span><span>−${fmtEuro(fin.prizeTax)}</span></div>
+        <div class="f-row f-tax"><span>Le staff (${Math.round(STAFF_RATE * 100)} % du restant)</span><span>−${fmtEuro(fin.staff)}</span></div>
+        <div class="f-row f-gain"><span>= Crédité sur ta banque</span><span>+${fmtEuro(fin.prizeNet)}</span></div>
+        <div class="f-row f-tax"><span>✈️ Ta part des frais de saison</span><span>−${fmtEuro(fin.travel)}</span></div>
+        <div class="f-row f-net"><span>Mouvement du tournoi</span><span class="${fin.delta < 0 ? "neg" : ""}">${fin.delta >= 0 ? "+" : "−"}${fmtEuro(Math.abs(fin.delta))}</span></div>
+      </div>`);
   }
 
   /* Contrôle antidopage */
@@ -1837,7 +2308,7 @@ function renderRecap(el, tid) {
       navigate("tournament", { id: next.id });
     }));
   } else {
-    actions.appendChild(mkBtn("🧾 Bilan financier de la saison", "btn btn-gold", () => navigate("favorites")));
+    actions.appendChild(mkBtn("🏦 La banque — bilan de la saison", "btn btn-gold", () => navigate("favorites")));
     actions.appendChild(mkBtn("🏆 Classements finaux", "btn btn-ghost", () => navigate("rankings")));
     if ((state.season || 1) < MAX_SEASONS)
       actions.appendChild(mkBtn(`▶ Saison ${(state.year || START_YEAR) + 1}`, "btn", goNextSeason));
@@ -2028,6 +2499,8 @@ function renderStats(el) {
     st => st.bpSaved, st => st.bpFaced, r => r.num + " / " + r.den));
   boardsGrid.appendChild(leaderboard("% de tie-breaks gagnés", "🔥",
     st => st.tbW, st => st.tbW + st.tbL, r => r.num + "-" + (r.den - r.num)));
+  boardsGrid.appendChild(leaderboard("% de 1res balles", "🚀",
+    st => st.fsIn, st => st.fsTot, r => fmtPts(r.num) + " / " + fmtPts(r.den)));
   el.appendChild(boardsGrid);
   el.insertAdjacentHTML("beforeend", `<div class="page-sub" style="margin-top:6px;font-size:12px">
     Minimum ${MIN_MATCHES} matchs joués pour figurer dans les classements (dès que 10 joueurs sont qualifiés).</div>`);
@@ -2188,6 +2661,13 @@ function renderStats(el) {
   const moneyRows = sortedByCareerMoney().slice(0, 10)
     .map(p => ({ pid: p.id, value: careerMoneyOf(p.id) }));
   recGrid.appendChild(recordBoard("Gains de carrière", "💼", moneyRows, v => fmtEuro(Math.round(v))));
+  // v21 : issues de la simulation point par point
+  const aceRows = all.map(x => ({ pid: x.p.id, value: x.st.aces, detail: x.st.df + " DF" }))
+    .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
+  recGrid.appendChild(recordBoard("Canonniers (aces)", "🎯", aceRows, v => fmtPts(v)));
+  const winRows = all.map(x => ({ pid: x.p.id, value: x.st.winners, detail: x.st.ue + " fautes directes" }))
+    .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
+  recGrid.appendChild(recordBoard("Frappeurs (points gagnants)", "💥", winRows, v => fmtPts(v)));
   el.appendChild(recGrid);
 
   el.insertAdjacentHTML("beforeend", `<div class="page-sub" style="margin-top:6px;font-size:12px">
@@ -2282,7 +2762,7 @@ function openPlayerCard(pid) {
         <div class="pcard-flag">${flagHTML(p.flag)}</div>
         <div class="pcard-id">
           <div class="pcard-name">${p.name}${p.custom ? " 🎾" : ""}${state.favorites.includes(pid) ? " ⭐" : ""}</div>
-          <div class="pcard-cat">${p.cat}${p.club ? ` · ${p.club}` : ""}${p.classement ? ` · <span class="classement-badge">Classé ${p.classement}</span>` : ""}${p.fr && !p.custom ? " · " + flagHTML("🇫🇷") : ""}</div>
+          <div class="pcard-cat">${p.cat}${p.club ? ` · ${p.club}` : ""}${!p.custom && state.favorites.includes(pid) ? ` · 🎾 ${clubName()}` : ""}${p.classement ? ` · <span class="classement-badge">Classé ${p.classement}</span>` : ""}${p.fr && !p.custom ? " · " + flagHTML("🇫🇷") : ""}</div>
         </div>
       </div>
       <div class="pcard-stats">
@@ -2291,22 +2771,9 @@ function openPlayerCard(pid) {
         <div class="pcs"><div class="v">${titles.length} / ${stats.tournamentsPlayed}</div><div class="pct">${pct(titles.length, stats.tournamentsPlayed)}</div><div class="l">Titres 🏆 / tournois</div></div>
         <div class="pcs"><div class="v">${stats.finals} / ${stats.tournamentsPlayed}</div><div class="pct">${pct(stats.finals, stats.tournamentsPlayed)}</div><div class="l">Finales / tournois</div></div>
       </div>
-      ${p.custom ? (() => {
-        const hs = hotStatsAll();
-        return `<div class="pcard-stats pcard-hotrow">
-          <div class="pcs pcs-hot"><div class="v">${hs.won} / ${hs.played}</div>
-            <div class="pct">${pct(hs.won, hs.played)}</div>
-            <div class="l">🔥 Hot points gagnés</div></div>
-        </div>`;
-      })() : ""}
       ${state.defending ? `<div class="pcard-betline">
         🌍 Classement ATP (12 mois) : <strong>n°${currentRank(pid, "rolling")}</strong> (${fmtPts(rollingPoints(pid))} pts)
         · 💼 Prize money carrière : <strong>${fmtEuro(Math.round(careerMoneyOf(pid)))}</strong>
-      </div>` : ""}
-      ${state.refs ? `<div class="pcard-betline">
-        📈 Prize attendu par le bookmaker : <strong>${fmtEuro(state.refs[pid])}</strong>
-        · cote <span class="odds-badge">×${betOdds(pid).toFixed(2)}</span>
-        ${betInfo(pid)}
       </div>` : ""}
       <div class="pcard-skills">
         <div class="pcard-col">
@@ -2327,6 +2794,15 @@ function openPlayerCard(pid) {
           <div class="pcs"><div class="v">${stats.tbW} - ${stats.tbL}</div><div class="pct">${pct(stats.tbW, stats.tbW + stats.tbL)}</div><div class="l">Tie-breaks G - P</div></div>
           <div class="pcs"><div class="v">${stats.bpConv} / ${stats.bpEarned}</div><div class="pct">${pct(stats.bpConv, stats.bpEarned)}</div><div class="l">BB réussies / obtenues</div></div>
           <div class="pcs"><div class="v">${stats.bpSaved} / ${stats.bpFaced}</div><div class="pct">${pct(stats.bpSaved, stats.bpFaced)}</div><div class="l">BB sauvées / concédées</div></div>
+        </div>
+        <div class="pcard-coltitle" style="margin-top:10px">Au microscope 🔬</div>
+        <div class="pcard-stats pcard-stats-tiles2">
+          <div class="pcs"><div class="v">${fmtPts(stats.aces)}</div><div class="pct">${stats.df} DF</div><div class="l">Aces · doubles fautes</div></div>
+          <div class="pcs"><div class="v">${pct(stats.fsIn, stats.fsTot)}</div><div class="pct">${fmtPts(stats.fsIn)} / ${fmtPts(stats.fsTot)}</div><div class="l">1res balles</div></div>
+          <div class="pcs"><div class="v">${fmtPts(stats.winners)} / ${fmtPts(stats.ue)}</div><div class="pct">${stats.winners + stats.ue > 0 ? pct(stats.winners, stats.winners + stats.ue) : "—"}</div><div class="l">Gagnants / fautes directes</div></div>
+          <div class="pcs"><div class="v">${stats.bestStreakPts} pts</div><div class="pct">${stats.bestStreakGames} jeux</div><div class="l">Séries max</div></div>
+          <div class="pcs"><div class="v">${stats.spSaved} / ${stats.mpSaved}</div><div class="pct">set / match</div><div class="l">Balles sauvées</div></div>
+          <div class="pcs"><div class="v">${Math.floor(stats.minutes / 60)}h${(stats.minutes % 60) < 10 ? "0" + stats.minutes % 60 : stats.minutes % 60}</div><div class="pct">${stats.wins + stats.losses > 0 ? Math.round(stats.minutes / (stats.wins + stats.losses)) + " min/match" : "—"}</div><div class="l">Temps de jeu</div></div>
         </div>
         <div class="pcard-coltitle" style="margin-top:10px">Bilan par surface</div>
         <div class="pcard-stats pcard-stats-tiles">
@@ -2355,208 +2831,168 @@ function pct(num, den) {
   return (Number.isInteger(s) ? s : s.toFixed(1)) + "%";
 }
 
-function betInfo(pid) {
-  const bet = state.bets && state.bets.find(b => b.pid === pid);
-  if (!bet) return "";
-  return `<br>💶 Ta mise : <strong>${fmtEuro(bet.amount)}</strong> — valeur actuelle :
-    <strong>${fmtEuro(Math.round(betValue(bet)))}</strong>`;
-}
-
 /* ============================================================
-   MES FAVORIS
+   🏦 LA BANQUE — trois sections : la carrière, les paris, le dopage
+   (début de la gestion du mode carrière évolué)
    ============================================================ */
 function renderFavorites(el) {
   const seasonOver = state.currentIndex >= CALENDAR.length;
-  const bank = bankNow();
-  const pace = expectedBankPace();
-  const expectedNow = pace[pace.length - 1].value;
+  const cp = customPlayer();
+  const st = seasonSettlement();
   const cash = Math.round(state.cash || 0);
-  const betsVal = Math.round(state.bets.reduce((s, b) => s + (b.sold ? 0 : betValue(b)), 0));
-  const openT = (state.tbets || []).filter(b => b.status === "open");
-  const openStakes = openT.reduce((s, b) => s + b.stake, 0);
-  const staked = state.bets.reduce((s, b) => s + (b.sold ? 0 : b.amount), 0);
-  const delta = seasonOver ? bank - state.bankroll : bank - expectedNow;
+  const bs = state.betStats || { staked: 0, returned: 0 };
+  const delta = cash - (state.bankroll || 0);
+  const year = state.year || START_YEAR;
+  const all = state.tbets || [];
+  const open = all.filter(b => b.status === "open");
+  const settled = all.filter(b => b.status !== "open");
+  const wonN = settled.filter(b => b.status === "won").length;
+  const net = Math.round(bs.returned - bs.staked);
   const syr = state.syringes || 0;
+  const used = SEASON_SYRINGES - syr;
 
   el.insertAdjacentHTML("beforeend", `
-    <div class="page-title">Mon portefeuille</div>
-    <div class="page-sub">Le <strong>cash</strong> est ton argent réel, disponible tout de suite.
-      Les <strong>paris de saison</strong> sont une valeur virtuelle : elle bouge à chaque tournoi
-      et ne devient du vrai argent qu'en fin de saison (ou via un cash-out à 80 %).</div>`);
+    <div class="page-title">🏦 La banque</div>
+    <div class="page-sub">Ta banque vit toute l'année : chaque mise sort, chaque gain rentre,
+      et à CHAQUE fin de tournoi le prize money de ton champion est crédité net
+      (−${Math.round(PRIZE_TAX_RATE * 100)} % de taxes puis −${Math.round(STAFF_RATE * 100)} % pour le staff) pendant que ta part des frais de saison
+      (${fmtEuro(TRAVEL_COST)} répartis sur les ${CALENDAR.length} tournois — rien si ton champion ne joue pas) est débitée.
+      Seul l'impôt de ${Math.round(TAX_RATE * 100)} % sur des paris gagnants attend la fin de saison.</div>`);
 
-  /* Portefeuille : cash réel / valeur virtuelle / mises en cours */
-  const share = bank > 0 ? x => Math.max(0, Math.min(100, 100 * x / bank)) : () => 0;
+  /* ===================== 1. LA CARRIÈRE ===================== */
+  el.insertAdjacentHTML("beforeend", `<div class="bank-sec">💼 La carrière</div>`);
   const hero = document.createElement("div");
   hero.className = "wallet";
   hero.innerHTML = `
     <div class="wallet-head">
       <div class="wallet-total">
-        <div class="wt-label">💼 Patrimoine total — saison ${state.year || START_YEAR}</div>
-        <div class="wt-value">${fmtEuro(Math.round(bank))}</div>
-        <div class="wt-delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲ +" : "▼ −"}${fmtEuro(Math.abs(Math.round(delta)))}
-          <span class="wt-deltasub">${seasonOver ? "sur la saison" : "vs le rythme attendu (" + fmtEuro(Math.round(expectedNow)) + ")"}</span></div>
+        <div class="wt-label">💶 Solde bancaire — saison ${year}</div>
+        <div class="wt-value${cash < 0 ? " neg" : ""}">${fmtEuro(cash)}</div>
+        <div class="wt-delta ${delta >= 0 ? "up" : "down"}">${delta >= 0 ? "▲ +" : "▼ −"}${fmtEuro(Math.abs(delta))}
+          <span class="wt-deltasub">depuis le début de saison</span></div>
       </div>
       <div class="wallet-start">
         <span class="ws-l">Capital de départ</span>
         <span class="ws-v">${fmtEuro(state.bankroll)}</span>
-        <span class="ws-l">💉 ${syr} dose${syr > 1 ? "s" : ""} restante${syr > 1 ? "s" : ""} · ${fmtEuro(DOPE_COST)} pièce</span>
-      </div>
-    </div>
-    ${bank > 0 ? `<div class="wallet-bar" title="Composition du patrimoine">
-      <span class="wb-cash" style="width:${share(cash)}%"></span><span class="wb-bets" style="width:${share(betsVal)}%"></span><span class="wb-tbets" style="width:${share(openStakes)}%"></span>
-    </div>` : ""}
-    <div class="wallet-tiles">
-      <div class="wtile wtile-cash">
-        <div class="wtl"><span class="wdot wb-cash"></span>💵 Cash — argent réel</div>
-        <div class="wtv">${fmtEuro(cash)}</div>
-        <div class="wts">Disponible tout de suite : paris de tournoi 🎰 et dopage 💉</div>
-      </div>
-      <div class="wtile wtile-bets">
-        <div class="wtl"><span class="wdot wb-bets"></span>🎫 Paris de saison — valeur virtuelle</div>
-        <div class="wtv">${fmtEuro(betsVal)}</div>
-        <div class="wts">${staked > 0 ? `Misé ${fmtEuro(staked)} · encaissé en <strong>fin de saison</strong> (ou cash-out à 80 %)` : "Aucun pari de saison en cours"}</div>
-      </div>
-      <div class="wtile wtile-tbets">
-        <div class="wtl"><span class="wdot wb-tbets"></span>🎰 Paris de tournoi en cours</div>
-        <div class="wtv">${fmtEuro(openStakes)}</div>
-        <div class="wts">${openT.length ? openT.length + " pari" + (openT.length > 1 ? "s" : "") + " en attente du récap" : "Aucune mise en attente"}</div>
+        <span class="ws-l">${cp ? "🎾 " + cp.name + " · " : ""}💉 ${syr} dose${syr > 1 ? "s" : ""} · 🎫 ${open.length} pari${open.length > 1 ? "s" : ""} en cours</span>
       </div>
     </div>`;
   el.appendChild(hero);
 
-  /* Bilan financier de fin de saison : gain imposé à 30 %, perte non taxée */
-  if (seasonOver) {
-    const st = seasonSettlement();
-    const isGain = st.gross > 0;
-    const fiscal = document.createElement("div");
-    fiscal.className = "card fiscal-card";
-    fiscal.innerHTML = `
-      <h3>🧾 Bilan financier de la saison ${state.year || START_YEAR}</h3>
-      <div class="fiscal-rows">
-        <div class="f-row"><span>Capital de départ</span><span>${fmtEuro(st.start)}</span></div>
-        <div class="f-row"><span>Valeur finale (cash + paris réalisés)</span><span>${fmtEuro(st.finalTotal)}</span></div>
-        <div class="f-row ${isGain ? "f-gain" : "f-loss"}"><span>${isGain ? "Gain de la saison" : "Perte de la saison"}</span>
-          <span>${isGain ? "+" : "−"}${fmtEuro(Math.abs(st.gross))}</span></div>
-        <div class="f-row f-tax"><span>Impôt sur le gain (${Math.round(TAX_RATE * 100)} %)</span>
-          <span>${isGain ? "−" + fmtEuro(st.tax) : "aucun — pas de gain, pas d'impôt 😮‍💨"}</span></div>
-        <div class="f-row f-net"><span>${(state.season || 1) < MAX_SEASONS
-          ? "💼 Capital reporté sur la saison " + ((state.year || START_YEAR) + 1)
-          : "💼 Capital final de ta carrière"}</span><span>${fmtEuro(st.net)}</span></div>
-      </div>
-      <p class="f-note">${isGain ? "🍾 Tu as battu le bookmaker — le fisc te dit merci." : "😅 Saison dans le rouge — au moins, aucun impôt."}
-        ${(state.season || 1) < MAX_SEASONS ? "Rien n'est offert : tu repars avec cette somme, ni plus ni moins." : ""}</p>`;
-    if ((state.season || 1) < MAX_SEASONS)
-      fiscal.appendChild(mkBtn(`▶ Saison ${(state.year || START_YEAR) + 1} avec ${fmtEuro(st.net)}`, "btn btn-gold", goNextSeason));
-    el.appendChild(fiscal);
+  const nDone = Math.min(state.currentIndex, CALENDAR.length);
+  const fiscal = document.createElement("div");
+  fiscal.className = "card fiscal-card";
+  fiscal.innerHTML = `
+    <h3>${seasonOver ? "🧾 Bilan de la saison " + year : "🔭 Le point après " + nDone + " tournoi" + (nDone > 1 ? "s" : "") + " / " + CALENDAR.length}</h3>
+    <div class="fiscal-rows">
+      <div class="f-row"><span>🎾 Prize money de ${cp ? cp.name : "ton champion"} (bruts, déjà gagnés)</span><span>${fmtEuro(st.prize)}</span></div>
+      <div class="f-row f-tax"><span>Taxes déjà prélevées (${Math.round(PRIZE_TAX_RATE * 100)} %)</span><span>−${fmtEuro(st.prizeTax)}</span></div>
+      <div class="f-row f-tax"><span>Staff déjà payé (${Math.round(STAFF_RATE * 100)} % du restant)</span><span>−${fmtEuro(st.staff)}</span></div>
+      <div class="f-row f-gain"><span>= Prize money nets, déjà crédités</span><span>+${fmtEuro(st.prizeNet)}</span></div>
+      <div class="f-row f-tax"><span>✈️ Frais déjà débités (tournois joués par ton champion)</span><span>−${fmtEuro(st.travelPaid)}</span></div>
+      ${st.travelLeft > 0 ? `<div class="f-row f-tax"><span>✈️ Frais à venir (s'il joue les tournois restants)</span><span>−${fmtEuro(st.travelLeft)}</span></div>` : ""}
+      <div class="f-row f-tax"><span>🎰 Impôt sur les paris (${Math.round(TAX_RATE * 100)} % du gain net, fin de saison)</span>
+        <span>${st.betTax > 0 ? "−" + fmtEuro(st.betTax) : "aucun — pas de gain, pas d'impôt 😮‍💨"}</span></div>
+      <div class="f-row"><span>💶 Solde bancaire${seasonOver ? "" : " actuel"}</span><span>${fmtEuro(st.cash)}</span></div>
+      <div class="f-row f-net"><span>${seasonOver
+        ? ((state.season || 1) < MAX_SEASONS ? "💼 Report sur la saison " + (year + 1) : "💼 Capital final de ta carrière")
+        : "💼 Report projeté si la saison s'arrêtait là"}</span>
+        <span class="${st.final < 0 ? "neg" : ""}">${fmtEuro(st.final)}</span></div>
+    </div>
+    <p class="f-note">${seasonOver
+      ? (st.final >= st.start ? "🍾 Saison rentable — la carrière décolle." : "😅 Saison dans le rouge" + (st.final < 0 ? " — la dette te suit sur la saison suivante !" : " — il en restera quand même un peu."))
+      : "La banque bouge à chaque tournoi : prize money net crédité, part des frais débitée — tout est déjà réglé au fil de l'eau."}</p>`;
+  if (seasonOver && (state.season || 1) < MAX_SEASONS)
+    fiscal.appendChild(mkBtn(`▶ Saison ${year + 1} avec ${fmtEuro(st.final)}`, "btn btn-gold", goNextSeason));
+  // 🧾 Le relevé bancaire, tournoi par tournoi
+  const ledger = CALENDAR.map(t => ({ t, rec: state.tournaments[t.id] }))
+    .filter(x => x.rec && x.rec.recap && x.rec.recap.finance);
+  if (ledger.length) {
+    fiscal.insertAdjacentHTML("beforeend", `<h3 style="margin-top:14px">🧾 Le relevé, tournoi par tournoi</h3>` +
+      ledger.map(({ t, rec }) => {
+        const f = rec.recap.finance;
+        if (f.absent) return `<div class="tbet-line tbet-open">
+          <span class="tbet-status">💤</span>
+          <span class="tbet-body"><span class="tbet-label">${flagHTML(t.country)} ${t.city}</span>
+            <span class="tbet-meta">ton champion n'était pas engagé — aucun frais</span></span>
+          <span class="tbet-payout">±0</span></div>`;
+        return `<div class="tbet-line ${f.delta >= 0 ? "tbet-won" : "tbet-lost"}">
+          <span class="tbet-status">${f.delta >= 0 ? "📈" : "📉"}</span>
+          <span class="tbet-body"><span class="tbet-label">${flagHTML(t.country)} ${t.city}</span>
+            <span class="tbet-meta">prize net +${fmtEuro(f.prizeNet)}${f.prize ? " (brut " + fmtEuro(f.prize) + ")" : ""} · frais −${fmtEuro(f.travel)}</span></span>
+          <span class="tbet-payout">${f.delta >= 0 ? "+" : "−"}${fmtEuro(Math.abs(f.delta))}</span></div>`;
+      }).join(""));
   }
+  el.appendChild(fiscal);
 
-  /* Détail des paris : une carte par pari (lisible aussi sur mobile) */
-  const tableCard = document.createElement("div");
-  tableCard.className = "card bets-table-card";
-  tableCard.innerHTML = `<h3>🎫 Tes paris de saison</h3>`;
-  const list = document.createElement("div");
-  list.className = "bet-cards";
-  if (state.bets.length === 0) {
-    tableCard.insertAdjacentHTML("beforeend", `<div class="bet-empty" style="color:var(--text-dim)">
-      Aucun pari de saison cette année — tout ton capital est en cash. 💵</div>`);
-  }
-  // Part du pool déjà distribuée (pour situer chaque pari vs son rythme attendu)
-  const stakedAll = state.bets.reduce((s, b) => s + (b.sold ? 0 : b.amount), 0);
-  const poolShare = stakedAll > 0 ? (expectedNow - pace[0].value) / stakedAll : 0;
-  state.bets.forEach(bet => {
-    const p = getPlayer(bet.pid);
-    const value = betValue(bet);
-    const expectedBet = bet.amount * poolShare;
-    const diff = value - (seasonOver ? bet.amount : expectedBet);
-    const bc = document.createElement("div");
-    bc.className = "bet-card" + (bet.sold ? " bet-sold" : "");
-    bc.innerHTML = `
-      <div class="bc-head">
-        <span class="bc-flag row-clickable bc-open">${flagHTML(p.flag)}</span>
-        <span class="bc-id row-clickable bc-open" title="Voir la carte de ${p.name}">
-          <span class="bc-name">${p.name}${p.custom ? " 🎾" : ""}</span>
-          <span class="bc-cat">${p.cat} · <span class="odds-badge">×${betOdds(bet.pid).toFixed(2)}</span>${
-            (state.suspended && state.suspended[bet.pid] !== undefined && state.currentIndex < CALENDAR.length &&
-             CALENDAR[state.currentIndex].month < state.suspended[bet.pid])
-              ? ' · <span class="susp-badge">🚨 Suspendu (dopage)</span>' : ""}</span>
-        </span>
-        ${bet.sold
-          ? `<span class="bc-value"><span class="v" style="color:var(--text-dim)">${fmtEuro(bet.sold.price)}</span>
-             <span class="sold-badge">💰 Vendu avant ${CALENDAR[Math.min(bet.sold.atIndex, CALENDAR.length - 1)].city}</span></span>`
-          : `<span class="bc-value">
-             <span class="v">${fmtEuro(Math.round(value))}</span>
-             <span class="rk-move ${diff >= 0 ? "up" : "down"}">${diff >= 0 ? "▲" : "▼"} ${fmtEuro(Math.abs(Math.round(diff)))}</span>
-           </span>`}
-      </div>
-      <div class="bc-grid">
-        <div class="bc-stat"><span class="l">Mise</span><span class="v">${fmtEuro(bet.amount)}</span></div>
-        <div class="bc-stat"><span class="l">Prize attendu</span><span class="v">${fmtEuro(state.refs[bet.pid])}</span></div>
-        <div class="bc-stat"><span class="l">Prize réel</span><span class="v">${fmtEuro(state.money[bet.pid] || 0)}</span></div>
-        <div class="bc-stat bc-last"><span class="l">Dernier résultat</span><span class="v">${lastResultLabel(bet.pid)}</span></div>
-      </div>`;
-    bc.querySelectorAll(".bc-open").forEach(e => e.addEventListener("click", () => openPlayerCard(bet.pid)));
-    // Cash-out : revente au bookmaker à 80 % de la juste valeur
-    if (!bet.sold && !seasonOver) {
-      const foot = document.createElement("div");
-      foot.className = "bc-foot";
-      const q = cashOutQuote(bet);
-      foot.appendChild(mkBtn(`💰 Cash-out ${fmtEuro(q.price)}`, "btn btn-ghost btn-sm", () => {
-        if (confirm(`Revendre ce pari sur ${p.name} pour ${fmtEuro(q.price)} ?\n` +
-          `(${fmtEuro(Math.round(q.acquired))} acquis + ${fmtEuro(Math.round(q.expectedRemaining))} attendus, commission 20 %)\n` +
-          `Le pari ne rapportera plus rien ensuite.`)) {
-          try { cashOutBet(bet.pid); navigate("favorites"); } catch (e) { alert(e.message); }
-        }
-      }));
-      foot.insertAdjacentHTML("beforeend",
-        `<span class="bc-lock">acquis ${fmtEuro(Math.round(q.acquired))} + attendu ${fmtEuro(Math.round(q.expectedRemaining))} − 20 %</span>`);
-      bc.appendChild(foot);
-    }
-    list.appendChild(bc);
-  });
-  tableCard.appendChild(list);
-  el.appendChild(tableCard);
+  /* ===================== 2. LES PARIS ===================== */
+  el.insertAdjacentHTML("beforeend", `<div class="bank-sec">🎰 Les paris</div>`);
+  const bets = document.createElement("div");
+  bets.className = "card bank-card";
+  bets.innerHTML = `
+    <div class="bk-tiles">
+      <div class="bk-tile"><div class="l">🎫 Misé cette saison</div><div class="v">${fmtEuro(Math.round(bs.staked))}</div>
+        <div class="s">${all.length} pari${all.length > 1 ? "s" : ""} placé${all.length > 1 ? "s" : ""}</div></div>
+      <div class="bk-tile"><div class="l">💰 Encaissé</div><div class="v">${fmtEuro(Math.round(bs.returned))}</div>
+        <div class="s">${wonN} gagné${wonN > 1 ? "s" : ""} / ${settled.length} réglé${settled.length > 1 ? "s" : ""} (${pct(wonN, settled.length)})</div></div>
+      <div class="bk-tile ${net >= 0 ? "bk-up" : "bk-down"}"><div class="l">⚖️ Bilan des paris</div>
+        <div class="v">${net >= 0 ? "+" : "−"}${fmtEuro(Math.abs(net))}</div>
+        <div class="s">${net > 0 ? "impôt de " + Math.round(TAX_RATE * 100) + " % en fin de saison : " + fmtEuro(st.betTax) : "un bilan positif est imposé à " + Math.round(TAX_RATE * 100) + " % en fin de saison"}</div></div>
+    </div>`;
+  if (open.length)
+    bets.insertAdjacentHTML("beforeend", `<h3 style="margin-top:12px">⏳ En cours (${open.length})</h3>` +
+      open.map(b => tbetLineHTML(b)).join(""));
+  if (settled.length)
+    bets.insertAdjacentHTML("beforeend", `<h3 style="margin-top:12px">🧾 Historique (les ${Math.min(settled.length, 40)} derniers)</h3>` +
+      settled.slice(-40).reverse().map(b => tbetLineHTML(b)).join(""));
+  if (!all.length)
+    bets.insertAdjacentHTML("beforeend", `<div class="bet-empty" style="color:var(--text-dim)">
+      Aucun pari placé — avant chaque tournoi, chaque tour et chaque match, le guichet t'attend. 🎰</div>`);
+  el.appendChild(bets);
 
-  /* Historique des paris de tournoi */
-  const tb = state.tbets || [];
-  if (tb.length) {
-    const tCard = document.createElement("div");
-    tCard.className = "card bets-table-card";
-    const staked = tb.reduce((s, b) => s + b.stake, 0);
-    const won = tb.reduce((s, b) => s + (b.payout || 0), 0);
-    tCard.innerHTML = `<h3>🎰 Tes paris de tournoi
-      <span class="tbet-summary">${fmtEuro(staked)} misés · ${fmtEuro(won)} encaissés</span></h3>`;
-    tb.slice().reverse().forEach(b => {
-      const t = CALENDAR.find(c => c.id === b.tourneyId);
-      const line = document.createElement("div");
-      line.className = "tbet-line tbet-" + b.status;
-      line.innerHTML = `
-        <span class="tbet-status">${b.status === "open" ? "⏳" : b.status === "won" ? "✅" : "❌"}</span>
-        <span class="tbet-body">
-          <span class="tbet-label">${b.label}</span>
-          <span class="tbet-meta">${flagHTML(t.country)} ${t.city}${b.year ? " " + b.year : ""} · mise ${fmtEuro(b.stake)} · cote ×${b.odds.toFixed(2)}</span>
-          ${b.result ? `<span class="tbet-result">→ ${b.result}</span>` : ""}
-        </span>
-        <span class="tbet-payout">${b.status === "won" ? "+" + fmtEuro(b.payout)
-          : b.status === "lost" ? "−" + fmtEuro(b.stake)
-          : "gain potentiel " + fmtEuro(Math.round(b.stake * b.odds))}</span>`;
-      tCard.appendChild(line);
-    });
-    el.appendChild(tCard);
+  /* ===================== 3. LE DOPAGE ===================== */
+  el.insertAdjacentHTML("beforeend", `<div class="bank-sec">💉 Le dopage</div>`);
+  const dop = document.createElement("div");
+  dop.className = "card bank-card";
+  dop.innerHTML = `
+    <div class="bk-tiles">
+      <div class="bk-tile"><div class="l">💉 Doses restantes</div><div class="v">${syr} / ${SEASON_SYRINGES}</div>
+        <div class="s">${fmtEuro(DOPE_COST)} la dose, payée en direct</div></div>
+      <div class="bk-tile"><div class="l">💸 Dépensé en dopage</div><div class="v">${fmtEuro(used * DOPE_COST)}</div>
+        <div class="s">${used} dose${used > 1 ? "s" : ""} utilisée${used > 1 ? "s" : ""} cette saison</div></div>
+      <div class="bk-tile"><div class="l">🚨 Risque</div><div class="v">${Math.round(DOPING_CONTROL_P * 100)} %</div>
+        <div class="s">de contrôle positif à l'issue du tournoi → ${SUSPENSION_MONTHS} mois de suspension</div></div>
+    </div>`;
+  const injections = CALENDAR.map(t => ({ t, rec: state.tournaments[t.id] }))
+    .filter(x => x.rec && x.rec.doped !== undefined && x.rec.doped !== null);
+  if (injections.length) {
+    dop.insertAdjacentHTML("beforeend", `<h3 style="margin-top:12px">🧪 Historique des injections</h3>` +
+      injections.map(({ t, rec }) => {
+        const p = getPlayer(rec.doped);
+        const done = rec.status === "done";
+        const res = !done ? `<span class="tbet-meta">tournoi en cours…</span>`
+          : rec.dopingControl
+            ? `<span class="tbet-result" style="color:var(--red)">🚨 contrôle POSITIF → suspendu ${SUSPENSION_MONTHS} mois</span>`
+            : `<span class="tbet-result" style="color:var(--green)">contrôle négatif — ni vu ni connu 😮‍💨</span>`;
+        return `<div class="tbet-line ${done && rec.dopingControl ? "tbet-lost" : "tbet-won"}">
+          <span class="tbet-status">💉</span>
+          <span class="tbet-body"><span class="tbet-label">${flagHTML(t.country)} ${t.city} — ${flagHTML(p.flag)} ${p.name} boosté</span>${res}</span>
+          <span class="tbet-payout">−${fmtEuro(DOPE_COST)}</span></div>`;
+      }).join(""));
+  } else {
+    dop.insertAdjacentHTML("beforeend", `<div class="bet-empty" style="color:var(--text-dim)">
+      Aucune injection cette saison — pour l'instant, tout le monde est clean. 😇</div>`);
   }
+  const suspNow = Object.entries(state.suspended || {}).filter(([pid, u]) =>
+    state.currentIndex < CALENDAR.length && CALENDAR[state.currentIndex].month < u);
+  if (suspNow.length) {
+    dop.insertAdjacentHTML("beforeend", `<h3 style="margin-top:12px">⛔ Suspendus en ce moment</h3>` +
+      suspNow.map(([pid]) => {
+        const p = getPlayer(parseInt(pid, 10));
+        return `<div class="tbet-line tbet-lost"><span class="tbet-status">⛔</span>
+          <span class="tbet-body"><span class="tbet-label">${flagHTML(p.flag)} ${p.name}</span>
+          <span class="tbet-meta">suspendu pour dopage</span></span><span class="tbet-payout"></span></div>`;
+      }).join(""));
+  }
+  el.appendChild(dop);
 }
-
-function lastResultLabel(pid) {
-  for (let i = CALENDAR.length - 1; i >= 0; i--) {
-    const t = CALENDAR[i];
-    const rec = state.tournaments[t.id];
-    if (!rec || rec.status !== "done") continue;
-    const r = rec.recap.results[pid];
-    if (!r) return `${flagHTML(t.country)} ${t.city} : non qualifié`;
-    const label = r.round === "W" ? "🏆 Vainqueur" : r.round === "F" ? "Finale"
-      : rec.type === "finals" ? (r.round === "SF" ? "Demi-finale" : `${r.rrWins} v. en poule`)
-      : roundShortLabel(r.round, t.drawSize);
-    return `${flagHTML(t.country)} ${t.city} : ${label}`;
-  }
-  return "—";
-}
-

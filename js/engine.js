@@ -6,9 +6,8 @@
 
 "use strict";
 
-const STORAGE_KEY = "funis_save_v12";
-const CASHOUT_RATE = 0.8;   // le bookmaker rachète un pari de saison à 80 % de sa juste valeur
-const TBET_SIMS = 250;      // simulations du tableau réel pour coter les paris de tournoi
+const STORAGE_KEY = "funis_save_v16";
+const TBET_SIMS = 100;      // simulations du tableau réel (point par point) pour coter les paris de tournoi
 const TBET_MIN = 100;       // mise minimale d'un pari de tournoi
 
 /* ---------- Qualifications Masters 1000 ---------- */
@@ -33,11 +32,14 @@ const FORM_META = {
   fatigue:  { icon: "😓", label: "Fatigué" },
   crame:    { icon: "🥵", label: "Cramé" },
 };
-const BET_BUDGET = 10000;   // capital de départ de la CARRIÈRE (saison 1 uniquement)
-const TAX_RATE = 0.30;      // impôt sur le gain global d'une saison (aucune taxe en cas de perte)
-const DOPE_COST = 1000;     // prix d'une dose de dopage (payée en cash)
-const BET_PLAYERS = 5;      // nombre de joueurs à parier (dont ton champion)
-const CUSTOM_BET = 2000;    // pari automatique et fixe sur ton champion
+const START_BANKROLL = 50000; // capital de départ de la CARRIÈRE (saison 1 uniquement)
+const TAX_RATE = 0.30;      // impôt sur le solde POSITIF des paris de la saison (différé)
+const PRIZE_TAX_RATE = 0.40;// taxes sur le prize money du champion (prélevées à chaque tournoi)
+const STAFF_RATE = 0.20;    // part du staff sur le prize money net de taxes
+const TRAVEL_COST = 500000; // frais de saison (déplacements & hébergement), répartis par tournoi — débités SEULEMENT si ton champion joue
+const MATCH_MK_SIMS = 200;  // simulations (point par point) pour coter les marchés d'un match
+const DOPE_COST = 10000;    // prix d'une dose de dopage (payée en direct)
+const BET_PLAYERS = 5;      // ton champion + les 4 joueurs de TON CLUB (suivis toute la saison)
 const ROSTER_SIZE = 127;    // 127 joueurs de plateau + ton champion = 128
 /* Total de compétences du champion = la MOYENNE du plateau (équité) :
    70 en mode légendes, ~87 en mode ATP (99 → 75), la moyenne réelle en CSV.
@@ -47,7 +49,6 @@ function championSkillTotal() {
   const sum = others.reduce((s, p) => s + SKILL_KEYS.reduce((a, k) => a + p.sk[k], 0), 0);
   return Math.round(sum / others.length);
 }
-const ODDS_SIMS = 120;      // saisons Monte-Carlo pour calibrer les cotes
 
 /* ---------- Carrière multisaison ---------- */
 const START_YEAR = 2026;
@@ -136,6 +137,24 @@ function civilFromDays(z) {
   return { y: y + (m <= 2 ? 1 : 0), m, d };
 }
 const MONTHS_FR = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
+const WEEKDAYS_FR = ["dim.", "lun.", "mar.", "mer.", "jeu.", "ven.", "sam."];
+/* Nombre de jours couverts par un tournoi (dates réelles d1 → d2) */
+function tourneySpan(t) {
+  const a = t.d1.split("-").map(Number), b = t.d2.split("-").map(Number);
+  return daysFromCivil(b[0], b[1], b[2]) - daysFromCivil(a[0], a[1], a[2]) + 1;
+}
+/* v21 : jour + heure de début d'un match (m.when = [décalage de jour, minutes]) */
+function matchWhenLabel(rec, m) {
+  if (!m || !m.when) return "";
+  const t = CALENDAR[rec.index];
+  const p = t.d1.split("-").map(Number);
+  const serial = daysFromCivil(p[0], p[1], p[2])
+    + 364 * (((state && state.year) || START_YEAR) - START_YEAR) + m.when[0];
+  const c = civilFromDays(serial);
+  const wd = WEEKDAYS_FR[((serial % 7) + 7 + 4) % 7]; // jour 0 (1970-01-01) = jeudi
+  const h = Math.floor(m.when[1] / 60), mn = m.when[1] % 60;
+  return wd + " " + (c.d === 1 ? "1er" : c.d) + " " + MONTHS_FR[c.m - 1] + " · " + h + "h" + (mn < 10 ? "0" + mn : mn);
+}
 function tourneyDates(t) {
   const year = (state && state.year) || START_YEAR;
   const shift = 364 * (year - START_YEAR);
@@ -212,21 +231,19 @@ function newSeason(rawPlayers) {
     lastSeasonRank: null,   // pid -> rang final de la saison précédente (tie-break des classements)
     defending: null,        // tourneyId -> {pid: pts} : points à défendre (classement glissant 12 mois)
     careerMoney: {},        // pid -> prize money cumulé des saisons PASSÉES (la saison en cours s'ajoute)
-    career: { seasons: [], stats: {}, match: null, no1Counts: {}, hot: { won: 0, played: 0 } }, // cumul des saisons passées
-    hotStats: { won: 0, played: 0 }, // hot points de ton champion cette saison
+    career: { seasons: [], stats: {}, match: null, no1Counts: {} }, // cumul des saisons passées
     players: buildPlayers(roster),
-    favorites: [],          // les 5 joueurs SUIVIS (dont ton champion) — indépendants des paris
-    bankroll: BET_BUDGET,   // capital de départ de la saison (10 000 € en saison 1, puis report net d'impôt)
-    bets: [],               // paris de saison libres [{pid, amount, sold?}] — 0 à 5, total ≤ bankroll
-    betsPlaced: false,
-    cash: 0,                // portefeuille cash (mise non placée + cash-out + paris de tournoi gagnés)
-    tbets: [],              // paris de tournoi [{id, tourneyId, market, pick, label, odds, stake, status, payout}]
+    favorites: [],          // les 5 joueurs SUIVIS (dont ton champion)
+    bankroll: START_BANKROLL, // capital de départ de la saison (50 000 € en saison 1, puis report)
+    cash: START_BANKROLL,   // solde bancaire LIVE : mises débitées et gains crédités en direct
+    betStats: { staked: 0, returned: 0 }, // cumul saison : misé / encaissé (fiscalité différée)
+    betsPlaced: false,      // vrai dès que les favoris sont choisis (la saison démarre)
+    tbets: [],              // paris [{id, tourneyId, kind, legs, odds, stake, status, payout, result}]
     tbetSeq: 1,
     fatigue: {},            // pid -> points de fatigue accumulés
     trained: {},            // pid -> true si n'a pas joué le tournoi précédent (bonus « entraîné »)
     syringes: SEASON_SYRINGES, // seringues de dopage restantes
     suspended: {},          // pid -> mois (décimal) de fin de suspension
-    refs: null,             // prize money attendu par joueur (cotes), calculé par Monte-Carlo
     currentIndex: 0,          // index du prochain tournoi dans CALENDAR
     tournaments: {},          // id -> record
     points: {},               // playerId -> points cumulés
@@ -499,6 +516,32 @@ function roundShortLabel(code, drawSize) {
   return ROUND_SHORT[code] || code;
 }
 
+/* ---------- Planning des matchs (v21) ----------
+   Les tours sont répartis sur les jours réels du tournoi (d1 → d2) :
+   la finale le dernier jour à 15h, les demi-finales la veille (14h et 18h),
+   les tours précédents partagent équitablement les jours restants, avec des
+   créneaux de 11h00 à 20h30. */
+function scheduleBracket(record, t) {
+  const span = tourneySpan(t);
+  const n = record.rounds.length;
+  record.rounds.forEach((round, r) => {
+    if (r === n - 1) { round[0].when = [span - 1, 900]; return; }              // finale 15h00
+    if (r === n - 2) { round.forEach((m, i) => { m.when = [span - 2, 840 + i * 240]; }); return; } // demies 14h/18h
+    const usable = Math.max(1, span - 2);
+    const from = Math.floor(r * usable / (n - 2));
+    const to = Math.max(from, Math.floor((r + 1) * usable / (n - 2)) - 1);
+    const days = []; for (let d = from; d <= to; d++) days.push(d);
+    const perDay = Math.ceil(round.length / days.length);
+    round.forEach((m, i) => {
+      const dayIdx = Math.min(days.length - 1, Math.floor(i / perDay));
+      const pos = i - dayIdx * perDay;
+      const denom = Math.max(1, perDay - 1);
+      const minutes = 660 + Math.round((pos / denom) * 19) * 30; // 11h00 → 20h30
+      m.when = [days[dayIdx], Math.min(1230, minutes)];
+    });
+  });
+}
+
 /* ---------- Démarrage d'un tournoi ---------- */
 function startTournament(index) {
   const t = CALENDAR[index];
@@ -527,7 +570,8 @@ function startTournament(index) {
   };
   // Exempts (byes) : les cases vides laissées par des suspendus donnent des walkovers
   settleByes(record);
-  record.markets = buildMarkets(record); // cotes des paris de tournoi sur le tableau réel
+  scheduleBracket(record, t); // v21 : jour + heure de début de chaque match
+  record.markets = null; // cotés au premier affichage (ensureTournamentMarkets)
   state.tournaments[t.id] = record;
   saveState();
   return record;
@@ -688,18 +732,16 @@ function simulateMatchCore(skA, skB, surfKey, bestOf, withTimeline, modA, modB) 
   return { winA: setsA > setsB, sets, tiebreaks, timeline, bp, sv };
 }
 
+/* v21 : les matchs RÉELS sont simulés POINT PAR POINT (mêmes probabilités que le
+   noyau jeu par jeu, mais avec 1res balles, aces, doubles fautes, gagnants, fautes
+   directes, séries, balles sauvées et durée). Les saisons silencieuses du bookmaker
+   restent en jeu par jeu (simulateMatchCore) : cotes identiques, calcul rapide. */
 function simulateMatch(idA, idB, tourneyRec) {
-  const t = CALENDAR[tourneyRec.index];
-  const core = simulateMatchCore(
-    getPlayer(idA).sk, getPlayer(idB).sk,
-    SURFACE_TO_SKILL[t.surface], t.bestOf, true,
-    formMod(idA, tourneyRec), formMod(idB, tourneyRec));
-  return {
-    winner: core.winA ? idA : idB, sets: core.sets, tiebreaks: core.tiebreaks,
-    timeline: core.timeline,
-    bp: [[core.bp.convA, core.bp.savedA], [core.bp.convB, core.bp.savedB]], // [conv, sauvées] pour p1 puis p2
-    sv: [core.sv.held, core.sv.total], // services tenus / jeux de service du match
-  };
+  const c = createPointMatch(idA, idB, tourneyRec);
+  const r = c.advance(); // non interactif : va jusqu'au bout du match
+  const res = r.res;
+  res.timeline = c.takeEvents().concat([{ t: "end", winner: res.winner === idA ? "A" : "B" }]);
+  return res;
 }
 
 /* Score formaté "6-4 7-6(5) 6-2" du point de vue du vainqueur d'abord */
@@ -718,80 +760,49 @@ function formatScore(match, winnerFirst) {
   }).join(" ");
 }
 
-/* ============================================================
-   MODE HOT POINTS — les matchs de TON CHAMPION, point par point.
-   Mode turbo qui s'arrête sur les balles de break (dans les deux
-   sens), les balles de set et de match, et TOUS les points de
-   tie-break. À chaque arrêt, tu choisis un coup :
-   - au service : Ace (Service), Lime (Endurance), Agression (Force), Amortie (Adresse)
-   - en retour  : Lime, Agression, Amortie
-   Le Mental booste tous les hot points. Répéter le même coup rend
-   prévisible : l'adversaire s'en souvient et gagne un bonus — le
-   tout modulé par la Tactique des deux joueurs.
-   ============================================================ */
-const HOT_SHOTS = [
-  { key: "ace",       label: "Ace",       icon: "🎯", skill: "service", serveOnly: true },
-  { key: "lime",      label: "Lime",      icon: "🧱", skill: "endurance" },
-  { key: "agression", label: "Agression", icon: "💥", skill: "force" },
-  { key: "amortie",   label: "Amortie",   icon: "🪶", skill: "adresse" },
-];
-const HOT_BASE = 0.05;        // implication : léger bonus de base
-const HOT_SKILL_W = 0.05;     // poids de la compétence du coup choisi (centrée sur 5,5)
-const HOT_MENTAL_W = 0.03;    // le Mental booste chaque hot point
-const HOT_MEMORY_W = 1.0;     // pénalité de prévisibilité (part d'utilisation au-delà de l'uniforme)
-const HOT_MEMORY_TACT = 0.08; // modulation par l'écart de Tactique (adversaire − champion)
-
-function hotShotDelta(champSk, oppSk, shotKey, used, usedTotal, nOpts) {
-  const sh = HOT_SHOTS.find(s => s.key === shotKey);
-  let d = HOT_BASE + HOT_SKILL_W * (champSk[sh.skill] - 5.5) + HOT_MENTAL_W * (champSk.mental - 5.5);
-  if (usedTotal > 0) {
-    const share = (used[shotKey] || 0) / usedTotal;
-    const over = Math.max(0, share - 1 / nOpts);
-    const memFactor = clamp(1 + HOT_MEMORY_TACT * (oppSk.tactique - champSk.tactique), 0.2, 2);
-    d -= HOT_MEMORY_W * over * memFactor;
-  }
-  return d;
-}
-
 /* Probabilité de gagner un JEU selon la probabilité de gagner un POINT (chaîne de Markov) */
 function gameProbFromPoint(p) {
   const q = 1 - p;
   const deuceP = (p * p) / (p * p + q * q);
   return Math.pow(p, 4) * (1 + 4 * q + 10 * q * q) + 20 * Math.pow(p, 3) * Math.pow(q, 3) * deuceP;
 }
-/* Inversion (dichotomie) : quelle proba de point donne cette proba de jeu ? */
+/* Inversion (dichotomie) : quelle proba de point donne cette proba de jeu ?
+   Mémoïsée (pas de 0,0005 sur pGame) : les milliers de simulations des
+   marchés — et les matchs réels — évitent de refaire la dichotomie. */
+const _ppfgMemo = new Map();
 function pointProbFromGame(pGame) {
+  const key = Math.round(pGame * 2000);
+  const hit = _ppfgMemo.get(key);
+  if (hit !== undefined) return hit;
   let lo = 0.02, hi = 0.98;
   for (let i = 0; i < 40; i++) {
     const mid = (lo + hi) / 2;
     if (gameProbFromPoint(mid) < pGame) lo = mid; else hi = mid;
   }
-  return (lo + hi) / 2;
+  const res = (lo + hi) / 2;
+  if (_ppfgMemo.size < 8000) _ppfgMemo.set(key, res);
+  return res;
 }
 
-const HOT_KIND_LABEL = { mp: "BALLE DE MATCH", sp: "BALLE DE SET", bp: "BALLE DE BREAK", tb: "POINT DE TIE-BREAK" };
-
-/* Contrôleur interactif : avance point par point, s'arrête sur les points chauds.
-   Utilisation : advance() → {type:"pause", hot} | {type:"end", res} ;
-   choose(key) → même retour ; takeEvents() → événements d'animation à consommer. */
-function createHotMatch(idA, idB, rec) {
+/* Moteur POINT PAR POINT (v21) : tous les matchs réels passent par lui.
+   Chaque point traverse le sous-modèle de service : 1re/2e balle, ace, double
+   faute, puis attribution point gagnant / faute directe — en préservant EXACTEMENT
+   la probabilité de point du serveur (décomposition à espérance constante).
+   Statistiques traquées par joueur : aces, DF, 1res balles, gagnants, fautes
+   directes, séries max de points et de jeux, balles de set/match sauvées, durée. */
+function createPointMatch(idA, idB, rec) {
   const t = CALENDAR[rec.index];
   const surfKey = SURFACE_TO_SKILL[t.surface];
   const bestOf = t.bestOf;
   const setsToWin = Math.ceil(bestOf / 2);
   const skA = getPlayer(idA).sk, skB = getPlayer(idB).sk;
   const model = matchProbModel(skA, skB, surfKey, formMod(idA, rec), formMod(idB, rec));
-  const cp = customPlayer();
-  const champIsA = !!(cp && idA === cp.id);
-  if (!cp || (!champIsA && idB !== cp.id)) throw new Error("Le mode Hot Points est réservé aux matchs de ton champion.");
-  const champSk = champIsA ? skA : skB;
-  const oppSk = champIsA ? skB : skA;
 
   const S = {
     sets: [], tiebreaks: {},
     setsA: 0, setsB: 0, gA: 0, gB: 0,
     ptS: 0, ptR: 0,           // points du jeu courant (serveur / relanceur)
-    totalGames: 0,
+    totalGames: 0, totalPoints: 0,
     serverIsA: rnd() < 0.5,
     pPoint: null,             // proba de point du serveur pour le jeu courant
     inTB: false, tbA: 0, tbB: 0, tbServerA: false, tbFirst: true, tbPair: 0, tbTarget: 7,
@@ -799,83 +810,95 @@ function createHotMatch(idA, idB, rec) {
   };
   const bp = { convA: 0, convB: 0, savedA: 0, savedB: 0 };
   const sv = { held: 0, total: 0 };
-  const used = {}; let usedTotal = 0;
-  const hot = { won: 0, played: 0 };
+  // Statistiques détaillées, indexées [A, B]
+  const stats = {
+    aces: [0, 0], df: [0, 0], fs: [[0, 0], [0, 0]], // 1res balles [in, total]
+    win: [0, 0], ue: [0, 0], ptsWon: [0, 0],
+    streakPts: [0, 0], streakGames: [0, 0],
+    spSaved: [0, 0], mpSaved: [0, 0],
+  };
+  const curPtsStreak = [0, 0], curGamesStreak = [0, 0];
   let events = [{ t: "start", server: S.serverIsA ? "A" : "B" }];
-  let pendingHot = null;
 
   const isDecider = () => S.setsA === setsToWin - 1 && S.setsB === setsToWin - 1;
-  const PT_NAMES = ["0", "15", "30", "40"];
-  function ptName(x, y) {
-    if (x >= 3 && y >= 3) return x === y ? "40" : (x > y ? "AV" : "40");
-    return PT_NAMES[Math.min(x, 3)];
-  }
-  function scoreText() {
-    const gC = champIsA ? S.gA : S.gB, gO = champIsA ? S.gB : S.gA;
-    const prev = S.sets.map(s => (champIsA ? s[0] + "-" + s[1] : s[1] + "-" + s[0])).join(" ");
-    let cur;
+  const skOfSide = side => (side === 0 ? skA : skB);
+
+  /* Balle de break / de set / de match AVANT le point (côté 0 = A, 1 = B) */
+  function ballContext() {
     if (S.inTB) {
-      const tC = champIsA ? S.tbA : S.tbB, tO = champIsA ? S.tbB : S.tbA;
-      cur = gC + "-" + gO + " · TB " + tC + "-" + tO;
-    } else {
-      const champServes = S.serverIsA === champIsA;
-      const ptC = champServes ? S.ptS : S.ptR, ptO = champServes ? S.ptR : S.ptS;
-      cur = gC + "-" + gO + " · " + ptName(ptC, ptO) + "-" + ptName(ptO, ptC);
+      const tgt = S.tbTarget;
+      const aBall = S.tbA >= tgt - 1 && S.tbA >= S.tbB + 1;
+      const bBall = S.tbB >= tgt - 1 && S.tbB >= S.tbA + 1;
+      const side = aBall ? 0 : bBall ? 1 : null;
+      if (side === null) return { sp: null, mp: null };
+      const setsX = side === 0 ? S.setsA : S.setsB;
+      return { sp: setsX < setsToWin - 1 ? side : null, mp: setsX === setsToWin - 1 ? side : null };
     }
-    return (prev ? prev + " · " : "") + cur;
+    const a = S.ptS, b = S.ptR;
+    const serverSide = S.serverIsA ? 0 : 1, retSide = 1 - serverSide;
+    const serverGP = a >= 3 && a >= b + 1;
+    const returnerGP = b >= 3 && b >= a + 1;
+    const out = { sp: null, mp: null };
+    const gpSide = returnerGP ? retSide : serverGP ? serverSide : null;
+    if (gpSide !== null) {
+      const gX = gpSide === 0 ? S.gA : S.gB, gY = gpSide === 0 ? S.gB : S.gA;
+      if (gX + 1 >= 6 && gX + 1 - gY >= 2) {
+        const setsX = gpSide === 0 ? S.setsA : S.setsB;
+        if (setsX === setsToWin - 1) out.mp = gpSide; else out.sp = gpSide;
+      }
+    }
+    return out;
   }
-  function makePause(kind, forChamp) {
-    const champServing = S.inTB ? (S.tbServerA === champIsA) : (S.serverIsA === champIsA);
-    const options = HOT_SHOTS.filter(s => champServing || !s.serveOnly)
-      .map(s => ({ key: s.key, label: s.label, icon: s.icon, skillLabel: SKILLS.find(x => x.key === s.skill).label, value: champSk[s.skill] }));
-    const p = {
-      kind, label: HOT_KIND_LABEL[kind],
-      forChamp, // true : la balle est pour ton champion ; false : contre lui ; null : point neutre (TB)
-      champServing, score: scoreText(), options,
-    };
-    pendingHot = p;
-    events.push({ t: "hot", kind, label: p.label, forChamp, score: p.score, champServing });
-    return { type: "pause", hot: p };
+
+  /* Un point de service complet : 1re/2e balle, ace, double faute, attribution.
+     E[victoire serveur] = pWin exactement (décomposition compensée). */
+  function playServePoint(pWin, serverSide) {
+    const sSk = skOfSide(serverSide).service;
+    const f = clamp(0.62 + 0.012 * (sSk - 5.5), 0.45, 0.80); // % de 1res balles
+    let p1 = clamp(pWin + 0.10, 0.03, 0.97);
+    let p2 = (pWin - f * p1) / (1 - f);
+    if (p2 < 0.03) { p2 = 0.03; p1 = clamp((pWin - (1 - f) * p2) / f, 0.02, 0.98); }
+    const ball = ballContext(); // AVANT résolution : balles de set/match à sauver
+    stats.fs[serverSide][1]++;
+    const firstIn = rnd() < f;
+    let win, ace = false, df = false;
+    if (firstIn) {
+      stats.fs[serverSide][0]++;
+      win = rnd() < p1;
+      if (win && rnd() < clamp(0.10 + 0.03 * (sSk - 5.5), 0.02, 0.40)) ace = true;
+    } else {
+      const dfP = clamp(0.10 - 0.008 * (sSk - 5.5), 0.03, 0.18); // double faute (2e balle)
+      if (rnd() < dfP) { win = false; df = true; }
+      else win = rnd() < Math.min(1, p2 / (1 - dfP));
+    }
+    const winnerSide = win ? serverSide : 1 - serverSide;
+    if (ball.sp !== null && ball.sp !== winnerSide) stats.spSaved[winnerSide]++;
+    if (ball.mp !== null && ball.mp !== winnerSide) stats.mpSaved[winnerSide]++;
+    if (ace) { stats.aces[serverSide]++; stats.win[serverSide]++; }
+    else if (df) { stats.df[serverSide]++; }
+    else {
+      const wSk = skOfSide(winnerSide);
+      const pEnd = clamp(0.42 + 0.02 * (wSk.force - 5.5) + 0.015 * (wSk.adresse - 5.5), 0.25, 0.70);
+      if (rnd() < pEnd) stats.win[winnerSide]++;   // point gagnant
+      else stats.ue[1 - winnerSide]++;             // faute directe du perdant du point
+    }
+    stats.ptsWon[winnerSide]++;
+    curPtsStreak[winnerSide]++;
+    curPtsStreak[1 - winnerSide] = 0;
+    stats.streakPts[winnerSide] = Math.max(stats.streakPts[winnerSide], curPtsStreak[winnerSide]);
+    S.totalPoints++;
+    return win;
   }
 
   function beginGame() {
     const pGame = model.game(S.serverIsA, isDecider(), S.totalGames);
     S.pPoint = pointProbFromGame(pGame);
   }
-  function classifyHot() {
-    const a = S.ptS, b = S.ptR;
-    const serverGP = a >= 3 && a >= b + 1;
-    const returnerGP = b >= 3 && b >= a + 1;
-    if (!serverGP && !returnerGP) return null;
-    const gServer = S.serverIsA ? S.gA : S.gB, gRet = S.serverIsA ? S.gB : S.gA;
-    const setsServer = S.serverIsA ? S.setsA : S.setsB, setsRet = S.serverIsA ? S.setsB : S.setsA;
-    const setIfServer = gServer + 1 >= 6 && gServer + 1 - gRet >= 2;
-    const setIfRet = gRet + 1 >= 6 && gRet + 1 - gServer >= 2;
-    const champServes = S.serverIsA === champIsA;
-    if (returnerGP) {
-      const kind = setIfRet ? (setsRet === setsToWin - 1 ? "mp" : "sp") : "bp";
-      return makePause(kind, !champServes); // la balle est pour le relanceur
-    }
-    if (serverGP && setIfServer) {
-      const kind = setsServer === setsToWin - 1 ? "mp" : "sp";
-      return makePause(kind, champServes);
-    }
-    return null;
+  function markGameStreak(winnerSide) {
+    curGamesStreak[winnerSide]++;
+    curGamesStreak[1 - winnerSide] = 0;
+    stats.streakGames[winnerSide] = Math.max(stats.streakGames[winnerSide], curGamesStreak[winnerSide]);
   }
-  function tbPause() {
-    const tgt = S.tbTarget;
-    const aBall = S.tbA >= tgt - 1 && S.tbA >= S.tbB + 1;
-    const bBall = S.tbB >= tgt - 1 && S.tbB >= S.tbA + 1;
-    let kind = "tb", forChamp = null;
-    if (aBall || bBall) {
-      const ballForA = aBall;
-      const setsBall = ballForA ? S.setsA : S.setsB;
-      kind = setsBall === setsToWin - 1 ? "mp" : "sp";
-      forChamp = ballForA === champIsA;
-    }
-    return makePause(kind, forChamp);
-  }
-
   function endSet() {
     const setIdx = S.sets.length;
     S.sets.push([S.gA, S.gB]);
@@ -890,6 +913,7 @@ function createHotMatch(idA, idB, rec) {
     S.totalGames++;
     sv.total++; if (serverWon) sv.held++;
     if (!serverWon) { if (gameToA) bp.convA++; else bp.convB++; } // break réel
+    markGameStreak(gameToA ? 0 : 1);
     events.push({
       t: "game", set: S.sets.length, gA: S.gA, gB: S.gB,
       winner: gameToA ? "A" : "B", server: S.serverIsA ? "A" : "B", broke: !serverWon,
@@ -920,6 +944,7 @@ function createHotMatch(idA, idB, rec) {
       const tbToA = S.tbA > S.tbB;
       if (tbToA) S.gA++; else S.gB++;
       S.totalGames++;
+      markGameStreak(tbToA ? 0 : 1);
       S.tiebreaks[S.sets.length] = [S.tbA, S.tbB];
       events.push({ t: "tiebreak", set: S.sets.length, gA: S.gA, gB: S.gB, pa: S.tbA, pb: S.tbB, winner: tbToA ? "A" : "B", target: S.tbTarget });
       S.serverIsA = !S.serverIsA;
@@ -933,65 +958,31 @@ function createHotMatch(idA, idB, rec) {
       sets: S.sets, tiebreaks: S.tiebreaks,
       bp: [[bp.convA, bp.savedA], [bp.convB, bp.savedB]],
       sv: [sv.held, sv.total],
-      hot: { won: hot.won, played: hot.played },
+      stats: {
+        aces: stats.aces, df: stats.df, fs: stats.fs,
+        win: stats.win, ue: stats.ue, ptsWon: stats.ptsWon,
+        streakPts: stats.streakPts, streakGames: stats.streakGames,
+        spSaved: stats.spSaved, mpSaved: stats.mpSaved,
+        mins: Math.round(S.totalPoints * 0.55 + S.sets.length * 4),
+      },
     };
   }
 
   function advance() {
-    if (pendingHot) return { type: "pause", hot: pendingHot };
     while (!S.done) {
-      if (S.inTB) return tbPause(); // TOUS les points du tie-break sont chauds
+      if (S.inTB) {
+        const pServ = model.tbPoint(S.tbServerA, isDecider(), S.totalGames);
+        resolveTBPoint(playServePoint(pServ, S.tbServerA ? 0 : 1));
+        continue;
+      }
       if (S.pPoint === null) beginGame();
-      const paused = classifyHot();
-      if (paused) return paused;
-      resolveGamePoint(rnd() < S.pPoint); // point ordinaire, résolu en silence
+      resolveGamePoint(playServePoint(S.pPoint, S.serverIsA ? 0 : 1));
     }
     return { type: "end", res: buildRes() };
   }
-  function choose(key) {
-    if (!pendingHot) throw new Error("Aucun point chaud en attente.");
-    const opt = pendingHot.options.find(o => o.key === key);
-    if (!opt) throw new Error("Ce coup n'est pas disponible ici.");
-    const d = hotShotDelta(champSk, oppSk, key, used, usedTotal, pendingHot.options.length);
-    used[key] = (used[key] || 0) + 1; usedTotal++;
-    const champServing = pendingHot.champServing;
-    let pServ = S.inTB ? model.tbPoint(S.tbServerA, isDecider(), S.totalGames) : S.pPoint;
-    let logit = Math.log(pServ / (1 - pServ)) + (champServing ? d : -d);
-    pServ = 1 / (1 + Math.exp(-logit));
-    const serverWins = rnd() < pServ;
-    const champWins = champServing ? serverWins : !serverWins;
-    hot.played++; if (champWins) hot.won++;
-    events.push({
-      t: "hotres", shot: key, label: opt.label, icon: opt.icon, champWins,
-      ace: key === "ace" && champWins && champServing, kind: pendingHot.kind,
-    });
-    pendingHot = null;
-    if (S.inTB) resolveTBPoint(serverWins); else resolveGamePoint(serverWins);
-    return advance();
-  }
   function takeEvents() { const out = events; events = []; return out; }
 
-  return { advance, choose, takeEvents, champIsA, get hotStats() { return hot; } };
-}
-
-/* Enregistre le résultat d'un match joué en mode Hot Points (stats incluses) */
-function commitHotMatch(rec, ctx, res) {
-  if (res.hot) {
-    if (!state.hotStats) state.hotStats = { won: 0, played: 0 };
-    state.hotStats.won += res.hot.won;
-    state.hotStats.played += res.hot.played;
-  }
-  if (ctx.kind === "bracket") applyBracketResult(rec, ctx.roundIdx, ctx.matchIdx, res);
-  else if (ctx.kind === "rr") applyFinalsResult(rec, "rr", ctx.group, ctx.matchIdx, res);
-  else if (ctx.kind === "sf") applyFinalsResult(rec, "sf", null, ctx.matchIdx, res);
-  else applyFinalsResult(rec, "final", null, 0, res);
-  return res;
-}
-/* Hot points gagnés sur toute la carrière (saisons passées + saison en cours) */
-function hotStatsAll() {
-  const c = (state.career && state.career.hot) || { won: 0, played: 0 };
-  const s = state.hotStats || { won: 0, played: 0 };
-  return { won: c.won + s.won, played: c.played + s.played };
+  return { advance, takeEvents };
 }
 
 /* ---------- Jouer un match du tableau ---------- */
@@ -1005,7 +996,7 @@ function playBracketMatch(rec, roundIdx, matchIdx) {
   applyBracketResult(rec, roundIdx, matchIdx, res);
   return res;
 }
-/* Applique un résultat de match (simulé OU joué en mode Hot Points) au tableau */
+/* Applique un résultat de match au tableau */
 function applyBracketResult(rec, roundIdx, matchIdx, res) {
   const match = rec.rounds[roundIdx][matchIdx];
   match.winner = res.winner;
@@ -1013,6 +1004,7 @@ function applyBracketResult(rec, roundIdx, matchIdx, res) {
   match.tiebreaks = res.tiebreaks;
   match.bp = res.bp;
   match.sv = res.sv;
+  match.stats = res.stats || null; // v21 : stats détaillées du match
   // La fatigue s'accumule pour les deux joueurs (le dopé la subira plus tard)
   const g = res.sets.reduce((s, x) => s + x[0] + x[1], 0);
   addFatigue(match.p1, g);
@@ -1024,6 +1016,8 @@ function applyBracketResult(rec, roundIdx, matchIdx, res) {
   if (rec.rounds[rec.currentRound].every(m => m.winner !== null || m.walkover)) {
     if (rec.currentRound + 1 < rec.rounds.length) rec.currentRound++;
   }
+  // Paris de match / de tour : règlement instantané (le solde vit en direct)
+  resolveOpenMatchBets(rec);
   // Tournoi terminé ?
   const final = rec.rounds[rec.rounds.length - 1][0];
   if (final.winner !== null && rec.status === "active") finalizeTournament(rec);
@@ -1060,6 +1054,7 @@ function finalizeTournament(rec) {
   rec.recap = { champion, results };
   runDopingControl(rec, t);
   rec.recap.tbets = resolveTournamentBets(rec);
+  settleTournamentFinance(rec); // 💶 prize net crédité, frais débités : la banque bouge
   state.currentIndex = rec.index + 1;
   takeSnapshot(t);
   saveState();
@@ -1118,7 +1113,16 @@ function startFinals(index) {
     sfWinners: [],
   };
   eight.forEach(id => { record.wins[id] = 0; });
-  record.markets = buildMarkets(record);
+  // v21 : planning du Masters — J1/J2/J3 répartis, demies l'avant-dernier jour, finale le dernier
+  const spanF = tourneySpan(t);
+  ["A", "B"].forEach((g, gi) => record.rr[g].forEach((m, i) => {
+    const day = Math.round((m.day - 1) * Math.max(0, spanF - 3) / 2);
+    const slot = (i % 2) * 2 + gi; // 4 matchs par journée : 11h, 14h, 17h, 20h
+    m.when = [day, 660 + slot * 180];
+  }));
+  record.sf.forEach((m, i) => { m.when = [spanF - 2, 840 + i * 240]; });
+  record.final.when = [spanF - 1, 900];
+  record.markets = null; // cotés au premier affichage (ensureTournamentMarkets)
   state.tournaments[t.id] = record;
   saveState();
   return record;
@@ -1160,7 +1164,7 @@ function playFinalsMatch(rec, phase, key, matchIdx) {
   applyFinalsResult(rec, phase, key, matchIdx, res);
   return res;
 }
-/* Applique un résultat de match du Masters (simulé OU joué en mode Hot Points) */
+/* Applique un résultat de match du Masters */
 function applyFinalsResult(rec, phase, key, matchIdx, res) {
   let match;
   if (phase === "rr") match = rec.rr[key][matchIdx];
@@ -1171,6 +1175,7 @@ function applyFinalsResult(rec, phase, key, matchIdx, res) {
   match.tiebreaks = res.tiebreaks;
   match.bp = res.bp;
   match.sv = res.sv;
+  match.stats = res.stats || null; // v21 : stats détaillées du match
   const gF = res.sets.reduce((s, x) => s + x[0] + x[1], 0);
   addFatigue(match.p1, gF);
   addFatigue(match.p2, gF);
@@ -1195,6 +1200,8 @@ function applyFinalsResult(rec, phase, key, matchIdx, res) {
     rec.phase = "done";
     finalizeFinals(rec);
   }
+  // Paris de match / de tour : règlement instantané (le solde vit en direct)
+  resolveOpenMatchBets(rec);
   saveState();
   return res;
 }
@@ -1235,6 +1242,7 @@ function finalizeFinals(rec) {
   rec.recap = { champion: champ, results };
   runDopingControl(rec, t);
   rec.recap.tbets = resolveTournamentBets(rec);
+  settleTournamentFinance(rec); // 💶 prize net crédité, frais débités : la banque bouge
   state.currentIndex = rec.index + 1;
   takeSnapshot(t);
   saveState();
@@ -1252,6 +1260,10 @@ function playerStatsSeason(pid) {
     bpOppSaved: 0, bpOppConv: 0, // BB de l'adversaire : sauvées contre moi / breaks subis
     tournamentsPlayed: 0, finals: 0,
     surf: { terre: [0, 0], gazon: [0, 0], dur: [0, 0], indoor: [0, 0] }, // [V, D] par surface
+    // v21 : stats détaillées (issues de la simulation point par point)
+    aces: 0, df: 0, fsIn: 0, fsTot: 0, winners: 0, ue: 0,
+    spSaved: 0, mpSaved: 0, minutes: 0,
+    bestStreakPts: 0, bestStreakGames: 0,
   };
   function addMatch(m, surfKey) {
     if (!m || m.winner === null || m.walkover || (m.p1 !== pid && m.p2 !== pid)) return;
@@ -1270,6 +1282,16 @@ function playerStatsSeason(pid) {
       const theirs = isP1 ? m.bp[1] : m.bp[0];
       st.bpConv += mine[0]; st.bpSaved += mine[1];
       st.bpOppConv += theirs[0]; st.bpOppSaved += theirs[1];
+    }
+    if (m.stats) {
+      const k = isP1 ? 0 : 1;
+      st.aces += m.stats.aces[k]; st.df += m.stats.df[k];
+      st.fsIn += m.stats.fs[k][0]; st.fsTot += m.stats.fs[k][1];
+      st.winners += m.stats.win[k]; st.ue += m.stats.ue[k];
+      st.spSaved += m.stats.spSaved[k]; st.mpSaved += m.stats.mpSaved[k];
+      st.minutes += m.stats.mins;
+      st.bestStreakPts = Math.max(st.bestStreakPts, m.stats.streakPts[k]);
+      st.bestStreakGames = Math.max(st.bestStreakGames, m.stats.streakGames[k]);
     }
   }
   CALENDAR.forEach(t => {
@@ -1293,13 +1315,16 @@ function playerStatsSeason(pid) {
 }
 
 const CAREER_STAT_KEYS = ["wins", "losses", "setsW", "setsL", "gamesW", "gamesL", "tbW", "tbL",
-  "bpConv", "bpSaved", "bpOppSaved", "bpOppConv", "tournamentsPlayed", "finals"];
+  "bpConv", "bpSaved", "bpOppSaved", "bpOppConv", "tournamentsPlayed", "finals",
+  "aces", "df", "fsIn", "fsTot", "winners", "ue", "spSaved", "mpSaved", "minutes"];
+const CAREER_MAX_KEYS = ["bestStreakPts", "bestStreakGames"]; // records : on garde le MAX
 
 function playerStats(pid) {
   const st = playerStatsSeason(pid);
   const c = state.career && state.career.stats && state.career.stats[pid];
   if (c) {
     CAREER_STAT_KEYS.forEach(k => { st[k] += c[k] || 0; });
+    CAREER_MAX_KEYS.forEach(k => { st[k] = Math.max(st[k], c[k] || 0); });
     Object.keys(st.surf).forEach(k => {
       if (c.surf && c.surf[k]) { st.surf[k][0] += c.surf[k][0]; st.surf[k][1] += c.surf[k][1]; }
     });
@@ -1372,7 +1397,6 @@ function addCustomPlayer(info) {
   state.players.push(p);
   state.points[p.id] = 0;
   state.money[p.id] = 0;
-  state.refs = null; // les cotes seront calculées avec lui
   saveState();
   return p;
 }
@@ -1387,12 +1411,8 @@ function customPlayer() {
    - les statistiques (cartes + page Stats) sont cumulées
    ============================================================ */
 function archiveSeason() {
-  if (!state.career) state.career = { seasons: [], stats: {}, match: null, no1Counts: {}, hot: { won: 0, played: 0 } };
+  if (!state.career) state.career = { seasons: [], stats: {}, match: null, no1Counts: {} };
   if (!state.career.no1Counts) state.career.no1Counts = {};
-  if (!state.career.hot) state.career.hot = { won: 0, played: 0 };
-  // Hot points de la saison rejoignent la carrière
-  state.career.hot.won += (state.hotStats && state.hotStats.won) || 0;
-  state.career.hot.played += (state.hotStats && state.hotStats.played) || 0;
   // Passages en tête du classement (après chaque tournoi de la saison)
   state.snapshots.forEach(s => {
     const list = s.ranksRolling || s.ranksPts;
@@ -1402,11 +1422,10 @@ function archiveSeason() {
   state.players.forEach(p => {
     const x = playerStatsSeason(p.id);
     const c = state.career.stats[p.id] || {
-      wins: 0, losses: 0, setsW: 0, setsL: 0, gamesW: 0, gamesL: 0, tbW: 0, tbL: 0,
-      bpConv: 0, bpSaved: 0, bpOppSaved: 0, bpOppConv: 0, tournamentsPlayed: 0, finals: 0,
       surf: { terre: [0, 0], gazon: [0, 0], dur: [0, 0], indoor: [0, 0] },
     };
-    CAREER_STAT_KEYS.forEach(k => { c[k] += x[k]; });
+    CAREER_STAT_KEYS.forEach(k => { c[k] = (c[k] || 0) + x[k]; });
+    CAREER_MAX_KEYS.forEach(k => { c[k] = Math.max(c[k] || 0, x[k]); });
     Object.keys(c.surf).forEach(k => { c.surf[k][0] += x.surf[k][0]; c.surf[k][1] += x.surf[k][1]; });
     state.career.stats[p.id] = c;
   });
@@ -1429,7 +1448,7 @@ function archiveSeason() {
   extremes(ms.matchListBo5).forEach(e => cm.listBo5.push({ tid: e.tid, games: e.games, year: e.year, m: keepM(e.m) }));
   extremes(ms.matchListBo3).forEach(e => cm.listBo3.push({ tid: e.tid, games: e.games, year: e.year, m: keepM(e.m) }));
   state.career.match = cm;
-  // Résumé de la saison (bilan financier : gain global imposé à 30 %, perte non taxée)
+  // Résumé de la saison (bilan : paris taxés à 30 % si positifs, prize money −33 % −10 %, −100 k€ de frais)
   const settle = seasonSettlement();
   const top = sortedByPoints();
   const cp = customPlayer();
@@ -1440,7 +1459,8 @@ function archiveSeason() {
     no1: top[0].name, no1Flag: top[0].flag, no1Pts: state.points[top[0].id],
     mastersChamp: finalsRec && finalsRec.recap ? getPlayer(finalsRec.recap.champion).name : "—",
     mastersFlag: finalsRec && finalsRec.recap ? getPlayer(finalsRec.recap.champion).flag : "",
-    start: settle.start, gross: settle.gross, tax: settle.tax, bank: settle.net,
+    start: settle.start, betNet: settle.betNet, betTax: settle.betTax,
+    prize: settle.prize, prizeNet: settle.prizeNet, travel: settle.travel, bank: settle.final,
     cpTitles,
     cpRank: cp ? currentRank(cp.id, "points") : null,
   });
@@ -1449,7 +1469,7 @@ function archiveSeason() {
 function startNextSeason() {
   if (state.currentIndex < CALENDAR.length) throw new Error("La saison n'est pas terminée.");
   if (state.season >= MAX_SEASONS) throw new Error("Carrière terminée : " + MAX_SEASONS + " saisons maximum.");
-  const settle = seasonSettlement(); // bilan fiscal : le capital NET est reporté (rien d'offert)
+  const settle = seasonSettlement(); // bilan de fin de saison : le solde final est reporté (dette possible !)
   archiveSeason();
   const lastRank = {};
   sortedByPoints().forEach((p, i) => { lastRank[p.id] = i + 1; });
@@ -1460,7 +1480,7 @@ function startNextSeason() {
     suspended: {},
     careerMoney: {},
     defending: {},
-    bankroll: settle.net,
+    bankroll: settle.final,
   };
   // Prize money de carrière : la saison écoulée rejoint le cumul
   state.players.forEach(p => { keep.careerMoney[p.id] = careerMoneyOf(p.id); });
@@ -1485,7 +1505,8 @@ function startNextSeason() {
   state.careerMoney = keep.careerMoney;
   state.defending = keep.defending;   // classement ATP glissant : entrées & têtes de série
   state.suspended = keep.suspended;
-  state.bankroll = keep.bankroll;     // capital reporté, net d'impôt
+  state.bankroll = keep.bankroll;     // solde reporté (peut être négatif : la dette suit)
+  state.cash = keep.bankroll;         // le solde bancaire live repart de là
   if (keep.matchSpeed !== undefined) state.matchSpeed = keep.matchSpeed;
   if (keep.cp) addCustomPlayer(keep.cp); // même champion, mêmes compétences (le bonus +3 se répartit ensuite)
   state.pendingUpgrade = !!keep.cp;      // l'écran « +3 points » doit être passé avant les paris
@@ -1522,220 +1543,76 @@ function improveChampion(newSk) {
     throw new Error("Répartis exactement " + CHAMPION_SEASON_BONUS + " points de progression.");
   cp.sk = Object.assign({}, newSk);
   state.pendingUpgrade = false;
-  state.refs = null; // les cotes seront recalculées avec le champion amélioré
   saveState();
   return cp;
 }
 
-/* ============================================================
-   PARIS & COTES
-   Le joueur mise 10 000 € sur 5 joueurs. Gain final d'un pari :
-   mise × (prize money réel / prize money attendu du joueur).
-   Le prize money attendu (ref) est estimé par Monte-Carlo : on
-   simule des saisons complètes en silence. L'espérance de gain
-   est ainsi ~10 000 € quelle que soit la répartition : parier
-   un cador rapporte peu par euro, un outsider rapporte gros.
-   ============================================================ */
-
-/* Saison complète silencieuse : renvoie le prize money de chaque joueur.
-   `defending` (optionnel) : points à défendre par tournoi — le miroir du
-   classement glissant, pour que les cotes restent justes en mode carrière. */
-function silentSeason(players, defending) {
-  const n = players.length;
-  const pts = new Array(n).fill(0);
-  const money = new Array(n).fill(0);
-  const allIds = players.map((_, i) => i);
-  // Miroir du système de forme (les refs restent calibrées avec les vraies règles)
-  const fat = new Array(n).fill(0);
-  const trained = new Array(n).fill(false);
-  const playedPrev = new Array(n).fill(false);
-  const simDone = {}; // tourneyId -> {idx: pts} des tournois déjà simulés cette saison
-
-  function rankedIds() {
-    const dec = allIds.map(i => [pts[i], Math.random(), i]);
-    dec.sort((x, y) => (y[0] - x[0]) || (x[1] - y[1]));
-    return dec.map(d => d[2]);
-  }
-  // Classement glissant simulé : tournois joués dans la sim + points défendus sinon
-  function rolledIds() {
-    if (!defending) return rankedIds();
-    const rp = new Array(n).fill(0);
-    CALENDAR.forEach(t => {
-      const src = simDone[t.id] || defending[t.id];
-      if (src) Object.entries(src).forEach(([i, v]) => {
-        const k = parseInt(i, 10);
-        if (k < n) rp[k] += v;
-      });
-    });
-    const dec = allIds.map(i => [rp[i], pts[i], Math.random(), i]);
-    dec.sort((x, y) => (y[0] - x[0]) || (y[1] - x[1]) || (x[2] - y[2]));
-    return dec.map(d => d[3]);
-  }
-  const modOf = i => {
-    if (trained[i]) return MOD_TRAINED;
-    if (fat[i] >= FATIGUE_BURNT) return MOD_BURNT;
-    if (fat[i] >= FATIGUE_TIRED) return MOD_TIRED;
-    return 0;
-  };
-  function lean(a, b, surfKey, bestOf) {
-    const core = simulateMatchCore(players[a].sk, players[b].sk, surfKey, bestOf, false, modOf(a), modOf(b));
-    const games = core.sets.reduce((s, x) => s + x[0] + x[1], 0);
-    fat[a] += fatigueGainFor(games, players[a].sk.endurance);
-    fat[b] += fatigueGainFor(games, players[b].sk.endurance);
-    return core.winA ? a : b;
-  }
-
-  CALENDAR.forEach((t, tIdx) => {
-    // Formes en début de tournoi : repos partiel si joué, entraîné sinon
-    allIds.forEach(i => {
-      if (tIdx === 0) { fat[i] = 0; trained[i] = false; }
-      else if (playedPrev[i]) { fat[i] = Math.max(0, fat[i] - FATIGUE_RECOVERY); trained[i] = false; }
-      else { fat[i] = 0; trained[i] = true; }
-      playedPrev[i] = false;
-    });
-    const surfKey = SURFACE_TO_SKILL[t.surface];
-    const przTable = PRIZE[PRIZE_BY_TOURNEY[t.id]];
-    if (t.cat === "FINALS") {
-      const eight = rankedIds().slice(0, 8);
-      eight.forEach(i => { playedPrev[i] = true; });
-      const gA = [eight[0]], gB = [eight[1]];
-      [[2, 3], [4, 5], [6, 7]].forEach(([i, j]) => {
-        if (Math.random() < 0.5) { gA.push(eight[i]); gB.push(eight[j]); }
-        else { gA.push(eight[j]); gB.push(eight[i]); }
-      });
-      const wins = {};
-      eight.forEach(id => { wins[id] = 0; });
-      [gA, gB].forEach(g => {
-        for (let i = 0; i < g.length; i++)
-          for (let j = i + 1; j < g.length; j++)
-            wins[lean(g[i], g[j], surfKey, t.bestOf)]++;
-      });
-      const top2 = g => g.slice()
-        .sort((a, b) => (wins[b] - wins[a]) || (Math.random() - 0.5)).slice(0, 2);
-      const [a1, a2] = top2(gA), [b1, b2] = top2(gB);
-      const w1 = lean(a1, b2, surfKey, t.bestOf);
-      const w2 = lean(b1, a2, surfKey, t.bestOf);
-      const champ = lean(w1, w2, surfKey, t.bestOf);
-      eight.forEach(id => {
-        pts[id] += POINTS.FINALS.RR_WIN * wins[id];
-        money[id] += przTable.PARTICIPATION + przTable.RR_WIN * wins[id];
-      });
-      [w1, w2].forEach(id => { pts[id] += POINTS.FINALS.SF_WIN; money[id] += przTable.SF_WIN; });
-      pts[champ] += POINTS.FINALS.F_WIN; money[champ] += przTable.F_WIN;
-    } else {
-      let entrants;
-      if (t.cat === "GC") entrants = allIds.slice();
-      else {
-        // Masters 1000 : entrées au classement glissant — 56 directs + 8 repêchés pondérés
-        const ranked = rolledIds();
-        const direct = ranked.slice(0, M1000_DIRECT);
-        entrants = direct.concat(weightedSample(ranked.slice(M1000_DIRECT), 64 - M1000_DIRECT));
-      }
-      entrants.forEach(i => { playedPrev[i] = true; });
-      let slots;
-      if (t.randomDraw) slots = shuffle(entrants);
-      else {
-        const inDraw = new Set(entrants);
-        const seeded = rolledIds().filter(id => inDraw.has(id)).slice(0, t.seeds);
-        const seededSet = new Set(seeded);
-        slots = placeSeedsAndRest(t.drawSize, seeded, entrants.filter(id => !seededSet.has(id)));
-      }
-      const ptsTable = POINTS[t.cat];
-      const tp = {}; // points gagnés sur CE tournoi (pour le glissant simulé)
-      let current = slots;
-      roundNames(t.drawSize).forEach(rName => {
-        const next = [];
-        for (let i = 0; i < current.length; i += 2) {
-          const a = current[i], b = current[i + 1];
-          const w = lean(a, b, surfKey, t.bestOf);
-          const l = w === a ? b : a;
-          pts[l] += ptsTable[rName] || 0;
-          money[l] += przTable[rName] || 0;
-          tp[l] = (tp[l] || 0) + (ptsTable[rName] || 0);
-          next.push(w);
-        }
-        current = next;
-      });
-      pts[current[0]] += ptsTable.W;
-      money[current[0]] += przTable.W;
-      tp[current[0]] = (tp[current[0]] || 0) + ptsTable.W;
-      simDone[t.id] = tp;
-    }
-  });
-  return money;
-}
-
-/* Prize money attendu par joueur (moyenne Monte-Carlo). */
-function computeExpectedPrizes(players, nSims, defending) {
-  const n = players.length;
-  const totals = new Array(n).fill(0);
-  for (let s = 0; s < nSims; s++) {
-    const m = silentSeason(players, defending);
-    for (let i = 0; i < n; i++) totals[i] += m[i];
-  }
-  const refs = {};
-  for (let i = 0; i < n; i++) refs[i] = Math.max(50000, Math.round(totals[i] / nSims));
-  return refs;
-}
-
-function ensureRefs() {
-  if (state.refs) return state.refs;
-  state.refs = computeExpectedPrizes(state.players, ODDS_SIMS, state.defending);
-  const vals = Object.values(state.refs);
-  state.refAvg = Math.round(vals.reduce((a, b) => a + b, 0) / vals.length);
-  saveState();
-  return state.refs;
-}
-
-/* Cote affichée : gain par euro misé si le joueur réalise le prize money
-   moyen du plateau (les outsiders ont une grosse cote). */
-function betOdds(pid) { return state.refAvg / state.refs[pid]; }
-
-/* Les 5 favoris (dont ton champion) : les joueurs que tu SUIS — leurs matchs se
-   jouent à la main, eux seuls peuvent être dopés. Indépendants des paris. */
+/* TON CLUB : ton champion + 4 joueurs recrutés (state.favorites). Tu SUIS leurs
+   matchs (joués à la main), eux seuls peuvent être dopés. Recruter le club lance la saison. */
 function setFavorites(pids) {
-  if (!Array.isArray(pids) || pids.length !== BET_PLAYERS) throw new Error(BET_PLAYERS + " favoris requis.");
+  if (!Array.isArray(pids) || pids.length !== BET_PLAYERS) throw new Error("Il faut ton champion + " + (BET_PLAYERS - 1) + " joueurs de club.");
   if (new Set(pids).size !== pids.length) throw new Error("Favoris en double.");
   pids.forEach(pid => { if (!getPlayer(pid)) throw new Error("Joueur inconnu."); });
   const cp = customPlayer();
-  if (cp && !pids.includes(cp.id)) throw new Error("Ton champion fait forcément partie de tes favoris.");
+  if (cp && !pids.includes(cp.id)) throw new Error("Ton champion est forcément le capitaine de son club.");
   state.favorites = pids.slice();
+  state.betsPlaced = true; // plus de paris de saison : la saison démarre ici
   saveState();
 }
 
-/* Paris de saison LIBRES : 0 à 5 paris, sur n'importe quel joueur (favori ou non),
-   dans la limite du capital. Ce qui n'est pas misé reste en cash. */
-function placeBets(bets) {
-  const total = bets.reduce((s, b) => s + b.amount, 0);
-  if (bets.length > BET_PLAYERS) throw new Error(BET_PLAYERS + " paris maximum.");
-  if (new Set(bets.map(b => b.pid)).size !== bets.length) throw new Error("Un seul pari par joueur.");
-  if (total > state.bankroll) throw new Error("La répartition dépasse ton capital de " + fmtEuro(state.bankroll) + ".");
-  bets.forEach(b => { if (b.amount < 100) throw new Error("Mise minimale : 100 € par joueur."); });
-  if ((state.favorites || []).length !== BET_PLAYERS) throw new Error("Choisis d'abord tes " + BET_PLAYERS + " favoris.");
-  state.bets = bets;
-  state.betsPlaced = true;
-  state.cash = state.bankroll - total; // le reste part en cash (paris de tournoi, dopage)
-  saveState();
+/* ---------- Finance : la banque vit toute l'année ----------
+   Les 500 000 € de frais de saison sont répartis équitablement sur les
+   14 tournois (le dernier absorbe l'arrondi) — la quote-part n'est débitée
+   QUE si ton champion est engagé. À CHAQUE fin de tournoi : le prize money
+   du champion est crédité net (−40 % de taxes puis −20 % de staff) et la
+   part des frais du tournoi est débitée. */
+function travelFeeFor(index) {
+  const n = CALENDAR.length;
+  const base = Math.round(TRAVEL_COST / n);
+  return index === n - 1 ? TRAVEL_COST - base * (n - 1) : base;
+}
+function settleTournamentFinance(rec) {
+  const cp = customPlayer();
+  const played = !!(cp && rec.entrants.includes(cp.id));
+  const r = played ? rec.recap.results[cp.id] : null;
+  const prize = r ? Math.round(r.money) : 0;
+  const prizeTax = Math.round(prize * PRIZE_TAX_RATE);
+  const staff = Math.round((prize - prizeTax) * STAFF_RATE);
+  const prizeNet = prize - prizeTax - staff;
+  // Pas engagé (non qualifié, suspendu…) : aucune quote-part de frais débitée
+  const travel = played ? travelFeeFor(rec.index) : 0;
+  state.cash = (state.cash || 0) + prizeNet - travel;
+  rec.recap.finance = { prize, prizeTax, staff, prizeNet, travel, delta: prizeNet - travel, absent: !played };
+  return rec.recap.finance;
 }
 
-/* ---------- Bilan financier de fin de saison ----------
-   Gain global imposé à 30 % ; aucune taxe en cas de perte.
-   Le capital net est reporté sur la saison suivante (rien d'offert). */
+/* ---------- Bilan de saison ----------
+   La banque étant dynamique (prize net crédité et frais débités tournoi
+   par tournoi), il ne reste en fin de saison que l'impôt de 30 % sur un
+   solde de paris positif. Le solde final (négatif possible !) est reporté. */
 function seasonSettlement() {
-  const betsVal = state.bets.reduce((s, b) => s + (b.sold ? 0 : betValue(b)), 0);
-  const openStakes = (state.tbets || []).filter(b => b.status === "open").reduce((s, b) => s + b.stake, 0);
-  const finalTotal = (state.cash || 0) + betsVal + openStakes;
-  const gross = finalTotal - state.bankroll;
-  const tax = gross > 0 ? Math.round(gross * TAX_RATE) : 0;
-  return {
-    start: state.bankroll,
-    cash: Math.round(state.cash || 0),
-    betsVal: Math.round(betsVal),
-    finalTotal: Math.round(finalTotal),
-    gross: Math.round(gross),
-    tax,
-    net: Math.max(0, Math.round(finalTotal - tax)),
-  };
+  const start = Math.round(state.bankroll || 0);
+  const cash = Math.round(state.cash || 0);
+  const bs = state.betStats || { staked: 0, returned: 0 };
+  const betStaked = Math.round(bs.staked || 0);
+  const betReturned = Math.round(bs.returned || 0);
+  const betNet = betReturned - betStaked;
+  const betTax = betNet > 0 ? Math.round(betNet * TAX_RATE) : 0;
+  let prize = 0, prizeTax = 0, staff = 0, prizeNet = 0, travelPaid = 0, travelLeft = 0;
+  CALENDAR.forEach((t, i) => {
+    const rec = state.tournaments[t.id];
+    const f = rec && rec.recap && rec.recap.finance;
+    if (f) {
+      prize += f.prize; prizeTax += f.prizeTax; staff += f.staff;
+      prizeNet += f.prizeNet; travelPaid += f.travel;
+    } else if (i >= state.currentIndex) {
+      travelLeft += travelFeeFor(i); // projection : quote-parts des tournois à venir (s'il les joue)
+    }
+  });
+  const travel = travelPaid + travelLeft;
+  const final = cash - betTax - travelLeft; // projection ; en fin de saison, travelLeft = 0
+  return { start, cash, betStaked, betReturned, betNet, betTax,
+           prize, prizeTax, staff, prizeNet, travel, travelPaid, travelLeft, final };
 }
 
 /* ============================================================
@@ -1794,15 +1671,15 @@ function beginTournamentForms(index) {
   });
 }
 
-/* Dopage : booste un de tes 5 favoris pour le tournoi à venir.
-   La dose coûte DOPE_COST € — payée en cash, pas de cash = pas de dopage. */
+/* Dopage : booste un joueur de ton club pour le tournoi à venir.
+   La dose coûte DOPE_COST € — débitée en direct, pas de solde = pas de dopage. */
 function applyDoping(tourneyId, pid) {
   const rec = state.tournaments[tourneyId];
   if (!rec || rec.status !== "active") throw new Error("Tournoi introuvable.");
   if (marketsClosed(rec)) throw new Error("Trop tard : le tournoi a commencé.");
   if ((state.syringes || 0) <= 0) throw new Error("Plus de seringues cette saison.");
   if ((state.cash || 0) < DOPE_COST) throw new Error("La dose coûte " + fmtEuro(DOPE_COST) + " — il te manque du cash.");
-  if (!state.favorites.includes(pid)) throw new Error("Tu ne peux doper qu'un de tes 5 favoris.");
+  if (!state.favorites.includes(pid)) throw new Error("Tu ne peux doper qu'un joueur de ton club.");
   if (!rec.entrants.includes(pid)) throw new Error("Ce joueur n'est pas au tableau.");
   if (rec.doped !== undefined && rec.doped !== null) throw new Error("Un seul joueur dopé par tournoi.");
   rec.doped = pid;
@@ -1812,50 +1689,467 @@ function applyDoping(tourneyId, pid) {
   return rec;
 }
 
-/* Valeur actuelle d'un pari / du portefeuille */
-function betValue(bet, moneyMap) {
-  const m = moneyMap ? (moneyMap[bet.pid] || 0) : (state.money[bet.pid] || 0);
-  return bet.amount * m / state.refs[bet.pid];
+/* ============================================================
+   PARIS DE MATCH & DE TOUR (v22)
+   Avant chaque tour : paris « vainqueur » sur tous les matchs du
+   tour (sauf ceux de ton champion), combinables. Avant chaque
+   match : marchés classiques (1/2, score exact, plus/moins de
+   jeux, handicap jeux, tie-break). Cotes simulées, règlement
+   INSTANTANÉ dès la fin du match : le solde bancaire vit en direct.
+   ============================================================ */
+
+/* Référence d'un match : {k:"b",r,i} tableau | {k:"rr",g,i} poule | {k:"sf",i} | {k:"f"} */
+function matchByRef(rec, ref) {
+  if (!ref) return null;
+  if (ref.k === "b") return (rec.rounds[ref.r] && rec.rounds[ref.r][ref.i]) || null;
+  if (ref.k === "rr") return (rec.rr && rec.rr[ref.g] && rec.rr[ref.g][ref.i]) || null;
+  if (ref.k === "sf") return (rec.sf && rec.sf[ref.i]) || null;
+  if (ref.k === "f") return rec.final || null;
+  return null;
 }
-/* Solde total = cash + paris de saison actifs + mises des paris de tournoi en cours */
-function bankNow() {
-  const seasonVal = state.bets.reduce((s, b) => s + (b.sold ? 0 : betValue(b)), 0);
-  const openStakes = (state.tbets || []).filter(b => b.status === "open").reduce((s, b) => s + b.stake, 0);
-  return (state.cash || 0) + seasonVal + openStakes;
+function refKey(ref) {
+  if (ref.k === "b") return "b:" + ref.r + ":" + ref.i;
+  if (ref.k === "rr") return "rr:" + ref.g + ":" + ref.i;
+  if (ref.k === "sf") return "sf:" + ref.i;
+  return "f";
 }
 
-/* ============================================================
-   CASH-OUT — le bookmaker rachète un pari de saison à 80 % de
-   sa juste valeur : gains déjà acquis + espérance sur les
-   tournois restants (part du pool non encore distribuée).
-   ============================================================ */
-function totalPoolAll() { return CALENDAR.reduce((s, t) => s + tournamentPool(t), 0); }
-function remainingPoolShare() {
-  let rem = 0;
-  CALENDAR.forEach(t => {
-    const r = state.tournaments[t.id];
-    if (!r || r.status !== "done") rem += tournamentPool(t);
+/* Les matchs du tour (ou de la phase) en cours */
+function listRoundMatches(rec) {
+  const out = [];
+  if (rec.type === "bracket") {
+    const r = rec.currentRound;
+    rec.rounds[r].forEach((m, i) => out.push({ ref: { k: "b", r, i }, m }));
+  } else if (rec.phase === "rr") {
+    ["A", "B"].forEach(g => rec.rr[g].forEach((m, i) => out.push({ ref: { k: "rr", g, i }, m })));
+  } else if (rec.phase === "sf") {
+    rec.sf.forEach((m, i) => out.push({ ref: { k: "sf", i }, m }));
+  } else if (rec.phase === "final") {
+    out.push({ ref: { k: "f" }, m: rec.final });
+  }
+  return out;
+}
+
+/* Le bookmaker connaît la forme (fatigue, entraînement)… mais pas le dopage ! */
+function bookmakerMod(pid) {
+  if (state.trained && state.trained[pid]) return MOD_TRAINED;
+  const f = fatigueOf(pid);
+  if (f >= FATIGUE_BURNT) return MOD_BURNT;
+  if (f >= FATIGUE_TIRED) return MOD_TIRED;
+  return 0;
+}
+
+/* Match point par point ALLÉGÉ pour coter les marchés : mêmes lois que le
+   vrai moteur (1res balles, aces, doubles fautes, tie-breaks) sans le suivi
+   des stats annexes — et optimisé (décomposition du service par JEU, pas
+   par point). Sert aux cotes de match ET de tournoi. */
+function leanPointMatch(skA, skB, surfKey, bestOf, modA, modB) {
+  const setsToWin = Math.ceil(bestOf / 2);
+  const model = matchProbModel(skA, skB, surfKey, modA, modB);
+  const sets = [];
+  const aces = [0, 0], df = [0, 0];
+  let held = 0, svTotal = 0, totalGames = 0;
+  let setsA = 0, setsB = 0;
+  let serverIsA = rnd() < 0.5;
+  let hadTB = false;
+  // Constantes de service par côté (ne dépendent que de la compétence Service)
+  const fS = [clamp(0.62 + 0.012 * (skA.service - 5.5), 0.45, 0.80),
+              clamp(0.62 + 0.012 * (skB.service - 5.5), 0.45, 0.80)];
+  const aceS = [clamp(0.10 + 0.03 * (skA.service - 5.5), 0.02, 0.40),
+                clamp(0.10 + 0.03 * (skB.service - 5.5), 0.02, 0.40)];
+  const dfS = [clamp(0.10 - 0.008 * (skA.service - 5.5), 0.03, 0.18),
+               clamp(0.10 - 0.008 * (skB.service - 5.5), 0.03, 0.18)];
+  let d1 = 0, d2 = 0; // décomposition courante : p1 (1re balle) et p2 / (1 − dfP)
+  function decompose(pWin, side) {
+    const f = fS[side];
+    let p1 = pWin + 0.10;
+    if (p1 > 0.97) p1 = 0.97; else if (p1 < 0.03) p1 = 0.03;
+    let p2 = (pWin - f * p1) / (1 - f);
+    if (p2 < 0.03) { p2 = 0.03; p1 = clamp((pWin - (1 - f) * p2) / f, 0.02, 0.98); }
+    d1 = p1;
+    d2 = Math.min(1, p2 / (1 - dfS[side]));
+  }
+  function servePoint(side) {
+    if (rnd() < fS[side]) {
+      if (rnd() < d1) {
+        if (rnd() < aceS[side]) aces[side]++;
+        return true;
+      }
+      return false;
+    }
+    if (rnd() < dfS[side]) { df[side]++; return false; }
+    return rnd() < d2;
+  }
+  while (setsA < setsToWin && setsB < setsToWin) {
+    const isDecider = setsA === setsToWin - 1 && setsB === setsToWin - 1;
+    let gA = 0, gB = 0;
+    while (true) {
+      const side = serverIsA ? 0 : 1;
+      decompose(pointProbFromGame(model.game(serverIsA, isDecider, totalGames)), side);
+      let ptS = 0, ptR = 0;
+      while (!((ptS >= 4 || ptR >= 4) && Math.abs(ptS - ptR) >= 2)) {
+        if (servePoint(side)) ptS++; else ptR++;
+      }
+      const serverWon = ptS > ptR;
+      if (serverIsA ? serverWon : !serverWon) gA++; else gB++;
+      totalGames++;
+      svTotal++; if (serverWon) held++;
+      serverIsA = !serverIsA;
+      if ((gA >= 6 || gB >= 6) && Math.abs(gA - gB) >= 2) break;
+      if (gA === 6 && gB === 6) {
+        hadTB = true;
+        const target = (isDecider && bestOf === 5) ? 10 : 7;
+        let ta = 0, tbb = 0, tbServerA = serverIsA, first = true, pair = 0;
+        while (!((ta >= target || tbb >= target) && Math.abs(ta - tbb) >= 2)) {
+          const sSide = tbServerA ? 0 : 1;
+          decompose(model.tbPoint(tbServerA, isDecider, totalGames), sSide);
+          const sw = servePoint(sSide);
+          if (tbServerA ? sw : !sw) ta++; else tbb++;
+          if (first) { tbServerA = !tbServerA; first = false; pair = 0; }
+          else { pair++; if (pair === 2) { tbServerA = !tbServerA; pair = 0; } }
+        }
+        if (ta > tbb) gA++; else gB++;
+        totalGames++;
+        serverIsA = !serverIsA;
+        break;
+      }
+    }
+    sets.push([gA, gB]);
+    if (gA > gB) setsA++; else setsB++;
+  }
+  return { winA: setsA > setsB, sets, aces, df, held, svTotal, games: totalGames, tb: hadTB };
+}
+
+/* Marchés classiques d'un match, cotés par MATCH_MK_SIMS simulations
+   point par point (aces et doubles fautes suivent les lois du vrai moteur) */
+function buildMatchMarkets(rec, m) {
+  const t = CALENDAR[rec.index];
+  const surfKey = SURFACE_TO_SKILL[t.surface];
+  const N = MATCH_MK_SIMS;
+  const pA = getPlayer(m.p1), pB = getPlayer(m.p2);
+  const mA = bookmakerMod(m.p1), mB = bookmakerMod(m.p2);
+  const setsToWin = Math.ceil(t.bestOf / 2);
+  let winA = 0, s1A = 0, tbYes = 0;
+  const scoreCount = {};   // "pid:setsGagnés-setsPerdus" du vainqueur
+  const gamesList = [];    // total de jeux du match
+  const margins = [];      // écart de jeux en faveur de p1
+  const acesL = [[], []], dfL = [[], []]; // aces / doubles fautes par joueur
+  for (let s = 0; s < N; s++) {
+    const core = leanPointMatch(pA.sk, pB.sk, surfKey, t.bestOf, mA, mB);
+    if (core.winA) winA++;
+    if (core.sets[0][0] > core.sets[0][1]) s1A++;
+    let g1 = 0, g2 = 0, s1 = 0;
+    core.sets.forEach(x => { g1 += x[0]; g2 += x[1]; if (x[0] > x[1]) s1++; });
+    const s2 = core.sets.length - s1;
+    const key = core.winA ? m.p1 + ":" + s1 + "-" + s2 : m.p2 + ":" + s2 + "-" + s1;
+    scoreCount[key] = (scoreCount[key] || 0) + 1;
+    gamesList.push(g1 + g2);
+    margins.push(g1 - g2);
+    if (core.tb) tbYes++;
+    acesL[0].push(core.aces[0]); acesL[1].push(core.aces[1]);
+    dfL[0].push(core.df[0]); dfL[1].push(core.df[1]);
+  }
+  /* 1/2 — vainqueur du match */
+  const winner = [
+    { pid: m.p1, odds: oddsFromCount(winA, N) },
+    { pid: m.p2, odds: oddsFromCount(N - winA, N) },
+  ];
+  /* Score exact (en sets) */
+  const score = [];
+  [m.p1, m.p2].forEach(pid => {
+    for (let l = 0; l < setsToWin; l++)
+      score.push({ pid, sw: setsToWin, sl: l, odds: oddsFromCount(scoreCount[pid + ":" + setsToWin + "-" + l] || 0, N) });
   });
-  return rem / totalPoolAll();
-}
-function cashOutQuote(bet) {
-  const acquired = betValue(bet);
-  const expectedRemaining = bet.amount * remainingPoolShare();
-  return {
-    acquired,
-    expectedRemaining,
-    price: Math.round(CASHOUT_RATE * (acquired + expectedRemaining)),
+  /* Plus/moins de jeux (ligne = médiane + 0,5) */
+  const sg = gamesList.slice().sort((a, b) => a - b);
+  const ouLine = sg[Math.floor(N / 2)] + 0.5;
+  const overN = gamesList.filter(g => g > ouLine).length;
+  const ou = { line: ouLine, over: oddsFromCount(overN, N), under: oddsFromCount(N - overN, N) };
+  /* Handicap jeux : favori −L,5 / outsider +L,5 (ligne = écart médian) */
+  const favIsA = winA * 2 >= N;
+  const fm = margins.map(x => (favIsA ? x : -x)).sort((a, b) => a - b);
+  const hLine = Math.max(1.5, Math.floor(fm[Math.floor(N / 2)]) + 0.5);
+  const covers = fm.filter(x => x > hLine).length;
+  const hcp = {
+    favPid: favIsA ? m.p1 : m.p2, dogPid: favIsA ? m.p2 : m.p1, line: hLine,
+    fav: oddsFromCount(covers, N), dog: oddsFromCount(N - covers, N),
   };
+  /* Au moins un tie-break ? */
+  const tb = { yes: oddsFromCount(tbYes, N), no: oddsFromCount(N - tbYes, N) };
+  /* Vainqueur du 1er set */
+  const set1 = [
+    { pid: m.p1, odds: oddsFromCount(s1A, N) },
+    { pid: m.p2, odds: oddsFromCount(N - s1A, N) },
+  ];
+  /* Plus/moins par joueur : aces et doubles fautes (ligne = médiane + 0,5) */
+  const ouOf = list => {
+    const s = list.slice().sort((a, b) => a - b);
+    const line = s[Math.floor(list.length / 2)] + 0.5;
+    const over = list.filter(x => x > line).length;
+    return { line, over: oddsFromCount(over, list.length), under: oddsFromCount(list.length - over, list.length) };
+  };
+  const pAces = [m.p1, m.p2].map((pid, i) => Object.assign({ pid }, ouOf(acesL[i])));
+  const pDf = [m.p1, m.p2].map((pid, i) => Object.assign({ pid }, ouOf(dfL[i])));
+  return { winner, set1, score, ou, hcp, tb, pAces, pDf };
 }
-function cashOutBet(pid) {
-  const bet = state.bets.find(b => b.pid === pid);
-  if (!bet || bet.sold) throw new Error("Pari introuvable ou déjà vendu.");
-  // (v18 : le pari sur ton champion est un pari volontaire comme un autre — revendable)
-  const q = cashOutQuote(bet);
-  bet.sold = { atIndex: state.currentIndex, price: q.price };
-  state.cash = (state.cash || 0) + q.price;
+
+/* Cache des marchés du tour en cours (recalculés à chaque nouveau tour).
+   Les matchs de ton champion n'ont PAS de cote : on ne parie pas sur soi-même. */
+function roundKeyOf(rec) {
+  return rec.type === "bracket" ? "b" + rec.currentRound : rec.phase;
+}
+function ensureRoundMarkets(rec) {
+  const key = roundKeyOf(rec);
+  if (rec.roundMk && rec.roundMk.key === key && !rec.roundMk.partial) return rec.roundMk;
+  if (!rec.roundMk || rec.roundMk.key !== key) rec.roundMk = { key, byKey: {} };
+  const cp = customPlayer();
+  listRoundMatches(rec).forEach(({ ref, m }) => {
+    const k = refKey(ref);
+    if (rec.roundMk.byKey[k]) return;
+    if (m.winner !== null || m.walkover || m.p1 === null || m.p2 === null) return;
+    if (cp && (m.p1 === cp.id || m.p2 === cp.id)) return;
+    rec.roundMk.byKey[k] = { ref, mk: buildMatchMarkets(rec, m) };
+  });
+  rec.roundMk.partial = false;
   saveState();
-  return q;
+  return rec.roundMk;
+}
+
+/* Cote UN SEUL match à la demande (fenêtre de match) — instantané */
+function ensureMatchMarket(rec, ref) {
+  const key = roundKeyOf(rec);
+  if (!rec.roundMk || rec.roundMk.key !== key) rec.roundMk = { key, byKey: {}, partial: true };
+  const k = refKey(ref);
+  if (rec.roundMk.byKey[k]) return rec.roundMk.byKey[k];
+  const m = matchByRef(rec, ref);
+  if (!m || m.winner !== null || m.walkover || m.p1 === null || m.p2 === null) return null;
+  const cp = customPlayer();
+  if (cp && (m.p1 === cp.id || m.p2 === cp.id)) return null;
+  rec.roundMk.byKey[k] = { ref, mk: buildMatchMarkets(rec, m) };
+  saveState();
+  return rec.roundMk.byKey[k];
+}
+
+/* Paris de TOUR : uniquement des vainqueurs, sur autant de matchs que voulu.
+   combo=true : UN pari combiné (cotes multipliées, une seule mise) ;
+   combo=false : un pari simple par sélection (la mise s'applique à chacune). */
+function placeRoundBets(tourneyId, picks, stake, combo) {
+  const rec = state.tournaments[tourneyId];
+  if (!rec || rec.status !== "active") throw new Error("Tournoi introuvable.");
+  if (!Array.isArray(picks) || picks.length === 0) throw new Error("Aucune sélection.");
+  if (combo && picks.length < 2) throw new Error("Un combiné demande au moins 2 sélections.");
+  stake = Math.round(Number(stake) || 0);
+  if (stake < TBET_MIN) throw new Error("Mise minimale : " + fmtEuro(TBET_MIN) + ".");
+  const mkRound = ensureRoundMarkets(rec);
+  const cp = customPlayer();
+  const seen = new Set();
+  const legs = picks.map(p => {
+    const key = refKey(p.ref);
+    if (seen.has(key)) throw new Error("Une seule sélection par match.");
+    seen.add(key);
+    const m = matchByRef(rec, p.ref);
+    if (!m || m.p1 === null || m.p2 === null) throw new Error("Match introuvable.");
+    if (m.winner !== null || m.walkover) throw new Error("Ce match est déjà joué.");
+    if (cp && (m.p1 === cp.id || m.p2 === cp.id)) throw new Error("Impossible de parier sur ton propre match.");
+    const entry = mkRound.byKey[key];
+    if (!entry) throw new Error("Pas de cote pour ce match.");
+    const o = entry.mk.winner.find(w => w.pid === p.pid);
+    if (!o) throw new Error("Sélection inconnue.");
+    const other = m.p1 === p.pid ? m.p2 : m.p1;
+    return { ref: p.ref, market: "winner", pid: p.pid, odds: o.odds,
+             label: getPlayer(p.pid).name + " bat " + getPlayer(other).name };
+  });
+  const total = combo ? stake : stake * legs.length;
+  if (total > (state.cash || 0)) throw new Error("Cash insuffisant : il faut " + fmtEuro(total) + ".");
+  const roundLbl = rec.type === "bracket"
+    ? roundShortLabel(rec.roundsNames[rec.currentRound], CALENDAR[rec.index].drawSize)
+    : ({ rr: "Poules", sf: "Demies", final: "Finale" })[rec.phase];
+  const out = [];
+  if (combo) {
+    const odds = Math.round(legs.reduce((o, l) => o * l.odds, 1) * 100) / 100;
+    state.cash -= stake;
+    state.betStats.staked += stake;
+    const bet = { id: state.tbetSeq++, tourneyId, kind: "round", combo: true, legs,
+      odds, stake, label: "Combiné × " + legs.length + " — " + roundLbl,
+      year: state.year, status: "open", payout: 0 };
+    state.tbets.push(bet);
+    out.push(bet);
+  } else {
+    legs.forEach(leg => {
+      state.cash -= stake;
+      state.betStats.staked += stake;
+      const bet = { id: state.tbetSeq++, tourneyId, kind: "round", combo: false, legs: [leg],
+        odds: leg.odds, stake, label: leg.label, year: state.year, status: "open", payout: 0 };
+      state.tbets.push(bet);
+      out.push(bet);
+    });
+  }
+  saveState();
+  return out;
+}
+
+/* Paris de MATCH : marchés classiques sur un match précis (avant qu'il se joue) */
+function placeMatchBet(tourneyId, ref, market, pick, stake) {
+  const rec = state.tournaments[tourneyId];
+  if (!rec || rec.status !== "active") throw new Error("Tournoi introuvable.");
+  stake = Math.round(Number(stake) || 0);
+  if (stake < TBET_MIN) throw new Error("Mise minimale : " + fmtEuro(TBET_MIN) + ".");
+  if (stake > (state.cash || 0)) throw new Error("Cash insuffisant.");
+  const m = matchByRef(rec, ref);
+  if (!m || m.p1 === null || m.p2 === null) throw new Error("Match introuvable.");
+  if (m.winner !== null || m.walkover) throw new Error("Ce match est déjà joué.");
+  const cp = customPlayer();
+  if (cp && (m.p1 === cp.id || m.p2 === cp.id)) throw new Error("Impossible de parier sur ton propre match.");
+  const entry = ensureMatchMarket(rec, ref);
+  if (!entry) throw new Error("Pas de cote pour ce match.");
+  const mk = entry.mk;
+  const marketKey = rec.id + "|" + refKey(ref) + "|" + market +
+    ((market === "pace" || market === "pdf") ? ":" + String(pick).split(":")[0] : "");
+  if ((state.tbets || []).some(b => b.marketKey === marketKey))
+    throw new Error("Tu as déjà misé sur ce marché.");
+  const frNum = x => String(x).replace(".", ",");
+  let leg;
+  if (market === "winner") {
+    const o = mk.winner.find(w => w.pid === pick);
+    if (!o) throw new Error("Sélection inconnue.");
+    leg = { ref, market, pid: pick, odds: o.odds, label: "Vainqueur : " + getPlayer(pick).name };
+  } else if (market === "score") {
+    const o = mk.score.find(x => x.pid + ":" + x.sw + "-" + x.sl === String(pick));
+    if (!o) throw new Error("Sélection inconnue.");
+    leg = { ref, market, pid: o.pid, sw: o.sw, sl: o.sl, odds: o.odds,
+            label: "Score exact : " + getPlayer(o.pid).name + " " + o.sw + "-" + o.sl };
+  } else if (market === "ou") {
+    if (pick !== "over" && pick !== "under") throw new Error("Sélection inconnue.");
+    leg = { ref, market, pick, line: mk.ou.line, odds: mk.ou[pick],
+            label: (pick === "over" ? "Plus" : "Moins") + " de " + frNum(mk.ou.line) + " jeux" };
+  } else if (market === "hcp") {
+    if (pick !== "fav" && pick !== "dog") throw new Error("Sélection inconnue.");
+    leg = { ref, market, pick, favPid: mk.hcp.favPid, line: mk.hcp.line, odds: mk.hcp[pick],
+            label: pick === "fav"
+              ? getPlayer(mk.hcp.favPid).name + " −" + frNum(mk.hcp.line) + " jeux"
+              : getPlayer(mk.hcp.dogPid).name + " +" + frNum(mk.hcp.line) + " jeux" };
+  } else if (market === "tb") {
+    if (pick !== "yes" && pick !== "no") throw new Error("Sélection inconnue.");
+    leg = { ref, market, pick, odds: mk.tb[pick],
+            label: pick === "yes" ? "Au moins un tie-break" : "Aucun tie-break" };
+  } else if (market === "set1") {
+    const o = mk.set1.find(w => w.pid === pick);
+    if (!o) throw new Error("Sélection inconnue.");
+    leg = { ref, market, pid: pick, odds: o.odds, label: "Vainqueur du 1er set : " + getPlayer(pick).name };
+  } else if (market === "pace" || market === "pdf") {
+    // pick = "pid:over" ou "pid:under"
+    const parts = String(pick).split(":");
+    const pid = parseInt(parts[0], 10), side = parts[1];
+    const arr = market === "pace" ? mk.pAces : mk.pDf;
+    const o = arr.find(x => x.pid === pid);
+    if (!o || (side !== "over" && side !== "under")) throw new Error("Sélection inconnue.");
+    leg = { ref, market, pid, pick: side, line: o.line, odds: o[side],
+            label: (market === "pace" ? "Aces" : "Doubles fautes") + " de " + getPlayer(pid).name +
+              " : " + (side === "over" ? "plus" : "moins") + " de " + frNum(o.line) };
+  } else throw new Error("Marché inconnu.");
+  state.cash -= stake;
+  state.betStats.staked += stake;
+  const bet = { id: state.tbetSeq++, tourneyId, kind: "match", marketKey,
+    match: getPlayer(m.p1).name + " – " + getPlayer(m.p2).name,
+    legs: [leg], odds: leg.odds, stake, label: leg.label,
+    year: state.year, status: "open", payout: 0 };
+  state.tbets.push(bet);
+  saveState();
+  return bet;
+}
+
+/* Sort d'une sélection : open / won / lost / void (walkover = remboursé) */
+function legOutcome(rec, leg) {
+  const m = matchByRef(rec, leg.ref);
+  if (!m) return "void";
+  if (m.walkover) return "void";
+  if (m.winner === null || !m.score) return "open";
+  const s1 = m.score.filter(x => x[0] > x[1]).length;
+  const s2 = m.score.length - s1;
+  const g1 = m.score.reduce((s, x) => s + x[0], 0);
+  const g2 = m.score.reduce((s, x) => s + x[1], 0);
+  if (leg.market === "winner") return m.winner === leg.pid ? "won" : "lost";
+  if (leg.market === "score") {
+    const sw = leg.pid === m.p1 ? s1 : s2, sl = leg.pid === m.p1 ? s2 : s1;
+    return (m.winner === leg.pid && sw === leg.sw && sl === leg.sl) ? "won" : "lost";
+  }
+  if (leg.market === "ou") {
+    const g = g1 + g2;
+    return (leg.pick === "over" ? g > leg.line : g < leg.line) ? "won" : "lost";
+  }
+  if (leg.market === "hcp") {
+    const margin = leg.favPid === m.p1 ? g1 - g2 : g2 - g1;
+    return (leg.pick === "fav" ? margin > leg.line : margin < leg.line) ? "won" : "lost";
+  }
+  if (leg.market === "tb") {
+    const has = m.score.some(x => x[0] + x[1] >= 13);
+    return ((leg.pick === "yes") === has) ? "won" : "lost";
+  }
+  if (leg.market === "set1") {
+    return ((m.score[0][0] > m.score[0][1] ? m.p1 : m.p2) === leg.pid) ? "won" : "lost";
+  }
+  if (leg.market === "pace" || leg.market === "pdf") {
+    if (!m.stats) return "void";
+    const idx = leg.pid === m.p1 ? 0 : 1;
+    const v = (leg.market === "pace" ? m.stats.aces : m.stats.df)[idx];
+    return (leg.pick === "over" ? v > leg.line : v < leg.line) ? "won" : "lost";
+  }
+  return "void";
+}
+
+/* Le fait réel qui justifie le paiement (ou non) d'une sélection */
+function legResultText(rec, leg) {
+  const m = matchByRef(rec, leg.ref);
+  if (!m) return "";
+  if (m.walkover) return "walkover — mise remboursée";
+  if (m.winner === null || !m.score) return "";
+  const w = getPlayer(m.winner), l = getPlayer(m.winner === m.p1 ? m.p2 : m.p1);
+  let txt = w.name + " bat " + l.name + " " + formatScore(m, true);
+  if (leg.market === "ou") {
+    const g = m.score.reduce((s, x) => s + x[0] + x[1], 0);
+    txt += " (" + g + " jeux)";
+  } else if (leg.market === "hcp") {
+    const g1 = m.score.reduce((s, x) => s + x[0], 0);
+    const g2 = m.score.reduce((s, x) => s + x[1], 0);
+    const margin = leg.favPid === m.p1 ? g1 - g2 : g2 - g1;
+    txt += " (écart " + (margin > 0 ? "+" : "") + margin + ")";
+  } else if (leg.market === "set1") {
+    const s1 = m.score[0];
+    txt += " (1er set " + (s1[0] > s1[1] ? getPlayer(m.p1).name : getPlayer(m.p2).name) + " " + Math.max(s1[0], s1[1]) + "-" + Math.min(s1[0], s1[1]) + ")";
+  } else if ((leg.market === "pace" || leg.market === "pdf") && m.stats) {
+    const idx = leg.pid === m.p1 ? 0 : 1;
+    const v = (leg.market === "pace" ? m.stats.aces : m.stats.df)[idx];
+    txt += " (" + v + " " + (leg.market === "pace" ? "ace" + (v > 1 ? "s" : "") : "double" + (v > 1 ? "s" : "") + " faute" + (v > 1 ? "s" : "")) + " de " + getPlayer(leg.pid).name + ")";
+  }
+  return txt;
+}
+
+/* Règlement INSTANTANÉ des paris de match et de tour : appelé après chaque
+   match joué. Perdu dès qu'une sélection tombe ; payé dès que tout est décidé. */
+function resolveOpenMatchBets(rec) {
+  const open = (state.tbets || []).filter(b =>
+    b.tourneyId === rec.id && b.status === "open" && (b.kind === "round" || b.kind === "match"));
+  const settled = [];
+  open.forEach(b => {
+    const outs = b.legs.map(leg => legOutcome(rec, leg));
+    if (outs.some(o => o === "lost")) {
+      b.status = "lost";
+      b.result = b.legs.map(leg => legResultText(rec, leg)).filter(Boolean).join(" · ");
+      settled.push(b);
+      return;
+    }
+    if (outs.some(o => o === "open")) return;
+    // tout est gagné (ou remboursé) : les jambes void comptent pour une cote de 1
+    const eff = b.legs.reduce((o, leg, i) => o * (outs[i] === "void" ? 1 : leg.odds), 1);
+    b.status = "won";
+    b.payout = Math.round(b.stake * eff);
+    state.cash = (state.cash || 0) + b.payout;
+    state.betStats.returned += b.payout;
+    b.result = b.legs.map(leg => legResultText(rec, leg)).filter(Boolean).join(" · ");
+    settled.push(b);
+  });
+  if (settled.length) saveState();
+  return settled;
 }
 
 /* ============================================================
@@ -1868,7 +2162,10 @@ function oddsFromCount(count, n) {
   return Math.min(99, Math.max(1.01, Math.round(100 / p) / 100));
 }
 
-/* Simule le tableau tel que tiré, et compte les événements des marchés */
+/* Simule le tableau tel que tiré, POINT PAR POINT (aces et doubles fautes
+   suivent les lois du vrai moteur), et cote les marchés du tournoi :
+   vainqueur (TOUS les joueurs sauf toi) + totaux d'aces, de doubles fautes
+   et % de jeux de service gagnés. */
 function buildMarkets(rec) {
   const t = CALENDAR[rec.index];
   const surfKey = SURFACE_TO_SKILL[t.surface];
@@ -1876,42 +2173,18 @@ function buildMarkets(rec) {
   const cpId = cp && rec.entrants.includes(cp.id) ? cp.id : null;
   const N = TBET_SIMS;
   const sk = id => state.players[id].sk;
-
-  // Cibles des défis
-  const seedEntries = Object.entries(rec.seedsMap || {}).map(([pid, s]) => ({ pid: parseInt(pid, 10), s }));
-  const seed1E = seedEntries.find(e => e.s === 1);
-  // Tête d'affiche : la TS n°1, sinon (AO sans têtes de série) le favori du bookmaker
-  const refLeader = state.refs
-    ? rec.entrants.slice().sort((a, b) => (state.refs[b] || 0) - (state.refs[a] || 0))[0]
-    : sortedByPoints().map(p => p.id).find(id => rec.entrants.includes(id));
-  const star = seed1E ? seed1E.pid : refLeader;
-  const top8seeds = seedEntries.filter(e => e.s <= 8).map(e => e.pid);
-  const marathonThreshold = t.bestOf === 5 ? 55 : 36;
-
   const winCount = {};
   rec.entrants.forEach(id => { winCount[id] = 0; });
   const isFinals = rec.type === "finals";
   const nRounds = isFinals ? 0 : rec.roundsNames.length;
-  const cpElim = new Array((isFinals ? 3 : nRounds) + 1).fill(0); // index d'élimination du champion
-  const propCount = { finale_decider: 0, bagel: 0, star_out: 0, marathon: 0, seeds_out: 0 };
-  const finaleGamesList = [], holdPctList = [];
-  const SCORE_KEYS = ["6-0", "6-1", "6-2", "6-3", "6-4", "7-5", "7-6"];
-  const topScoreWins = {};
-  SCORE_KEYS.forEach(k => { topScoreWins[k] = 0; });
-
-  const qfIdx = isFinals ? -1 : rec.roundsNames.indexOf("QF");
-  const r16Idx = isFinals ? -1 : rec.roundsNames.indexOf("R16");
+  const acesList = [], dfList = [], holdPctList = [];
   // Le bookmaker connaît la forme actuelle des joueurs (mais pas le dopage !)
   const trainedNow = {};
   rec.entrants.forEach(id => { trainedNow[id] = !!(state.trained && state.trained[id]); });
 
   for (let s = 0; s < N; s++) {
-    let events = { bagel: false, marathon: false, decider: false, starOut: false, seedsOut: 0 };
     let champion = null;
-    let cpElimIdx = null;
-    let finaleGames = 0, held = 0, svTotal = 0;
-    const scoreCount = {};
-    SCORE_KEYS.forEach(k => { scoreCount[k] = 0; });
+    let acesTot = 0, dfTot = 0, held = 0, svTotal = 0;
     const simFat = {};
     rec.entrants.forEach(id => { simFat[id] = fatigueOf(id); });
     const modOf = id => {
@@ -1921,26 +2194,15 @@ function buildMarkets(rec) {
       if (f >= FATIGUE_TIRED) return MOD_TIRED;
       return 0;
     };
-
-    function playLean(a, b, isFinal) {
-      const core = simulateMatchCore(sk(a), sk(b), surfKey, t.bestOf, false, modOf(a), modOf(b));
-      const w = core.winA ? a : b;
-      let games = 0;
-      core.sets.forEach(x => {
-        games += x[0] + x[1];
-        const key = Math.max(x[0], x[1]) + "-" + Math.min(x[0], x[1]);
-        if (key in scoreCount) scoreCount[key]++;
-        if ((x[0] === 6 && x[1] === 0) || (x[0] === 0 && x[1] === 6)) events.bagel = true;
-      });
-      held += core.sv.held; svTotal += core.sv.total;
-      simFat[a] = (simFat[a] || 0) + fatigueGainFor(games, sk(a).endurance);
-      simFat[b] = (simFat[b] || 0) + fatigueGainFor(games, sk(b).endurance);
-      if (games > marathonThreshold) events.marathon = true;
-      if (isFinal && core.sets.length === t.bestOf) { events.decider = true; finaleGames = games; }
-      else if (isFinal) finaleGames = games;
-      return w;
+    function playLean(a, b) {
+      const core = leanPointMatch(sk(a), sk(b), surfKey, t.bestOf, modOf(a), modOf(b));
+      acesTot += core.aces[0] + core.aces[1];
+      dfTot += core.df[0] + core.df[1];
+      held += core.held; svTotal += core.svTotal;
+      simFat[a] = (simFat[a] || 0) + fatigueGainFor(core.games, sk(a).endurance);
+      simFat[b] = (simFat[b] || 0) + fatigueGainFor(core.games, sk(b).endurance);
+      return core.winA ? a : b;
     }
-
     if (!isFinals) {
       let current = [];
       rec.rounds[0].forEach(m => { current.push(m.p1, m.p2); });
@@ -1948,125 +2210,62 @@ function buildMarkets(rec) {
         const next = [];
         for (let i = 0; i < current.length; i += 2) {
           const a = current[i], b = current[i + 1];
-          // Exempts (suspendus) : walkover
-          if (a === null || b === null) {
-            const w0 = a !== null ? a : b;
-            if (w0 === cpId && r === nRounds - 1) cpElimIdx = nRounds;
-            next.push(w0);
-            continue;
-          }
-          const w = playLean(a, b, r === nRounds - 1);
-          const l = w === a ? b : a;
-          if (l === star && r < qfIdx) events.starOut = true;
-          if (top8seeds.includes(l) && r < r16Idx) events.seedsOut++;
-          if (l === cpId) cpElimIdx = r;
-          next.push(w);
+          if (a === null || b === null) { next.push(a !== null ? a : b); continue; }
+          next.push(playLean(a, b));
         }
         current = next;
       }
       champion = current[0];
-      if (cpId !== null && cpElimIdx === null) cpElimIdx = nRounds; // champion du tournoi
     } else {
-      // Masters : poules puis KO
       const wins = {};
       rec.entrants.forEach(id => { wins[id] = 0; });
       ["A", "B"].forEach(g => {
         const grp = rec.groups[g];
         for (let i = 0; i < grp.length; i++)
           for (let j = i + 1; j < grp.length; j++)
-            wins[playLean(grp[i], grp[j], false)]++;
+            wins[playLean(grp[i], grp[j])]++;
       });
       const top2 = g => rec.groups[g].slice()
         .sort((a, b) => (wins[b] - wins[a]) || (Math.random() - 0.5)).slice(0, 2);
       const [a1, a2] = top2("A"), [b1, b2] = top2("B");
-      const w1 = playLean(a1, b2, false), w2 = playLean(b1, a2, false);
-      champion = playLean(w1, w2, true);
-      if (cpId !== null) {
-        const inSF = [a1, a2, b1, b2].includes(cpId);
-        const inF = [w1, w2].includes(cpId);
-        cpElimIdx = champion === cpId ? 3 : inF ? 2 : inSF ? 1 : 0;
-      }
+      champion = playLean(playLean(a1, b2), playLean(b1, a2));
     }
     winCount[champion]++;
-    if (cpId !== null) cpElim[cpElimIdx]++;
-    if (events.decider) propCount.finale_decider++;
-    if (events.bagel) propCount.bagel++;
-    if (events.starOut) propCount.star_out++;
-    if (events.marathon) propCount.marathon++;
-    if (events.seedsOut >= 3) propCount.seeds_out++;
-    finaleGamesList.push(finaleGames);
+    acesList.push(acesTot);
+    dfList.push(dfTot);
     if (svTotal > 0) holdPctList.push(100 * held / svTotal);
-    const mxScore = Math.max.apply(null, SCORE_KEYS.map(k => scoreCount[k]));
-    if (mxScore > 0) SCORE_KEYS.forEach(k => { if (scoreCount[k] === mxScore) topScoreWins[k]++; });
   }
 
-  /* Marché vainqueur : 6 favoris + ton champion + un outsider surprise */
-  const ranked = rec.entrants.slice().sort((a, b) => winCount[b] - winCount[a]);
-  const picks = ranked.slice(0, 6);
-  if (cpId !== null && !picks.includes(cpId)) picks.push(cpId);
-  const outsiders = ranked.slice(8, 32).filter(id => !picks.includes(id));
-  if (outsiders.length) picks.push(outsiders[Math.floor(Math.random() * outsiders.length)]);
-  const winner = picks.map(pid => ({ pid, odds: oddsFromCount(winCount[pid], N) }));
+  /* Vainqueur du tournoi : TOUS les joueurs sont cotés — sauf toi */
+  const winner = rec.entrants.filter(id => id !== cpId)
+    .map(pid => ({ pid, odds: oddsFromCount(winCount[pid], N) }))
+    .sort((a, b) => (a.odds - b.odds) || (winCount[b.pid] - winCount[a.pid]));
 
-  /* Marché parcours du champion */
-  let run = null;
-  if (cpId !== null) {
-    const reachedAtLeast = k => {
-      let c = 0;
-      for (let i = k; i < cpElim.length; i++) c += cpElim[i];
-      return c;
-    };
-    if (!isFinals) {
-      const lines = t.drawSize === 128
-        ? [[1, "Passe le 1er tour"], [3, "Atteint les 8es de finale"], [4, "Atteint les quarts"], [6, "Atteint la finale"], [7, "Gagne le tournoi"]]
-        : [[1, "Passe le 1er tour"], [2, "Atteint les 8es de finale"], [3, "Atteint les quarts"], [5, "Atteint la finale"], [6, "Gagne le tournoi"]];
-      run = lines.map(([k, label]) => ({ k, label, odds: oddsFromCount(reachedAtLeast(k), N) }));
-    } else {
-      run = [[1, "Sort des poules"], [2, "Atteint la finale"], [3, "Gagne le Masters"]]
-        .map(([k, label]) => ({ k, label, odds: oddsFromCount(reachedAtLeast(k), N) }));
-    }
-  }
-
-  /* Défis fun : 3 tirés parmi les applicables */
-  const starP = star !== undefined && star !== null ? getPlayer(star) : null;
-  const propDefs = [
-    { code: "finale_decider", label: t.bestOf === 5 ? "La finale ira au 5e set" : "La finale ira au 3e set", count: propCount.finale_decider },
-    { code: "bagel", label: "Au moins un 6-0 sera infligé dans le tournoi", count: propCount.bagel },
-    (!isFinals && star !== undefined && star !== null)
-      ? { code: "star_out", label: `${starP.name} (tête d'affiche) tombera avant les quarts`, count: propCount.star_out } : null,
-    { code: "marathon", label: `Un match dépassera ${marathonThreshold} jeux`, count: propCount.marathon },
-    (!isFinals && top8seeds.length >= 8)
-      ? { code: "seeds_out", label: "Au moins 3 des 8 premières têtes de série tomberont avant les 8es", count: propCount.seeds_out } : null,
-  ].filter(Boolean);
-  const props = shuffle(propDefs).slice(0, 3)
-    .map(d => ({ code: d.code, label: d.label, odds: oddsFromCount(d.count, N) }));
-
-  /* Over/Under : nombre de jeux de la finale (ligne = médiane + 0.5) */
-  const median = list => {
+  /* Totaux du tournoi : plus/moins, ligne = médiane + 0,5 */
+  const ouOf = list => {
     const s = list.slice().sort((a, b) => a - b);
-    return s.length ? s[Math.floor(s.length / 2)] : 0;
+    const line = (s.length ? s[Math.floor(s.length / 2)] : 0) + 0.5;
+    const over = list.filter(x => x > line).length;
+    return { line, over: oddsFromCount(over, list.length || 1), under: oddsFromCount(list.length - over, list.length || 1) };
   };
-  const fgLine = Math.max(0, Math.floor(median(finaleGamesList))) + 0.5;
-  const fgOver = finaleGamesList.filter(g => g > fgLine).length;
-  const ouFinal = {
-    line: fgLine,
-    over: oddsFromCount(fgOver, finaleGamesList.length || 1),
-    under: oddsFromCount((finaleGamesList.length - fgOver), finaleGamesList.length || 1),
-  };
-
-  /* Over/Under : % de jeux de service gagnés sur l'ensemble du tournoi (ligne au 0.5 près) */
-  const hpLine = Math.round(median(holdPctList) * 2) / 2;
+  const ouAces = ouOf(acesList);
+  const ouDf = ouOf(dfList);
+  /* % de jeux de service gagnés (ligne au 0,5 près) */
+  const hsSorted = holdPctList.slice().sort((a, b) => a - b);
+  const hpLine = Math.round((hsSorted.length ? hsSorted[Math.floor(hsSorted.length / 2)] : 0) * 2) / 2;
   const hpOver = holdPctList.filter(p => p > hpLine).length;
   const ouHold = {
     line: hpLine,
     over: oddsFromCount(hpOver, holdPctList.length || 1),
     under: oddsFromCount((holdPctList.length - hpOver), holdPctList.length || 1),
   };
+  return { winner, ouAces, ouDf, ouHold };
+}
 
-  /* Score de set le plus fréquent du tournoi (égalité = gagnant aussi) */
-  const topScore = SCORE_KEYS.map(k => ({ key: k, odds: oddsFromCount(topScoreWins[k], N) }));
-
-  return { winner, run, props, star, top8seeds, marathonThreshold, ouFinal, ouHold, topScore };
+/* Construit les cotes du tournoi à la demande (premier affichage du guichet) */
+function ensureTournamentMarkets(rec) {
+  if (!rec.markets) { rec.markets = buildMarkets(rec); saveState(); }
+  return rec.markets;
 }
 
 /* Le marché ferme dès que le premier match du tournoi est joué */
@@ -2079,86 +2278,45 @@ function marketsClosed(rec) {
 
 function placeTournamentBet(tourneyId, market, pick, stake) {
   const rec = state.tournaments[tourneyId];
-  if (!rec || !rec.markets) throw new Error("Pas de marché pour ce tournoi.");
+  if (!rec) throw new Error("Pas de marché pour ce tournoi.");
   if (marketsClosed(rec)) throw new Error("Le marché est fermé : le tournoi a commencé.");
+  ensureTournamentMarkets(rec);
   stake = Math.round(Number(stake) || 0);
   if (stake < TBET_MIN) throw new Error("Mise minimale : " + fmtEuro(TBET_MIN) + ".");
-  if (stake > (state.cash || 0)) throw new Error("Cash insuffisant — revends un pari de saison (cash-out) pour obtenir du cash.");
-  const marketKey = market === "prop" ? "prop:" + pick : market;
+  if (stake > (state.cash || 0)) throw new Error("Cash insuffisant.");
+  const marketKey = market;
   if ((state.tbets || []).some(b => b.tourneyId === tourneyId && b.marketKey === marketKey))
     throw new Error("Tu as déjà misé sur ce marché.");
 
   let odds, label, line;
   const frNum = x => String(x).replace(".", ",");
   if (market === "winner") {
+    const cp0 = customPlayer();
+    if (cp0 && pick === cp0.id) throw new Error("Impossible de parier sur toi-même.");
     const o = rec.markets.winner.find(x => x.pid === pick);
     if (!o) throw new Error("Sélection inconnue.");
     odds = o.odds; label = "Vainqueur : " + getPlayer(pick).name;
-  } else if (market === "run") {
-    const o = (rec.markets.run || []).find(x => x.k === pick);
-    if (!o) throw new Error("Sélection inconnue.");
-    odds = o.odds; label = customPlayer().name + " — " + o.label;
-  } else if (market === "ouf") {
-    const m = rec.markets.ouFinal;
-    if (!m || (pick !== "over" && pick !== "under")) throw new Error("Sélection inconnue.");
-    odds = m[pick]; line = m.line;
-    label = "Jeux de la finale : " + (pick === "over" ? "plus" : "moins") + " de " + frNum(line);
+  } else if (market === "oua" || market === "oud") {
+    const mkt = market === "oua" ? rec.markets.ouAces : rec.markets.ouDf;
+    if (!mkt || (pick !== "over" && pick !== "under")) throw new Error("Sélection inconnue.");
+    odds = mkt[pick]; line = mkt.line;
+    label = (market === "oua" ? "Aces du tournoi : " : "Doubles fautes du tournoi : ") +
+      (pick === "over" ? "plus" : "moins") + " de " + frNum(line);
   } else if (market === "ouh") {
-    const m = rec.markets.ouHold;
-    if (!m || (pick !== "over" && pick !== "under")) throw new Error("Sélection inconnue.");
-    odds = m[pick]; line = m.line;
+    const mkt = rec.markets.ouHold;
+    if (!mkt || (pick !== "over" && pick !== "under")) throw new Error("Sélection inconnue.");
+    odds = mkt[pick]; line = mkt.line;
     label = "Services gagnés du tournoi : " + (pick === "over" ? "plus" : "moins") + " de " + frNum(line) + " %";
-  } else if (market === "top") {
-    const o = (rec.markets.topScore || []).find(x => x.key === pick);
-    if (!o) throw new Error("Sélection inconnue.");
-    odds = o.odds; label = "Score de set le plus fréquent : " + pick;
-  } else {
-    const o = rec.markets.props.find(x => x.code === pick);
-    if (!o) throw new Error("Sélection inconnue.");
-    odds = o.odds; label = o.label;
-  }
+  } else throw new Error("Marché inconnu.");
   state.cash -= stake;
+  state.betStats.staked += stake;
   const bet = {
-    id: state.tbetSeq++, tourneyId, market, marketKey, pick, label, odds, stake, line,
+    id: state.tbetSeq++, tourneyId, kind: "tournament", market, marketKey, pick, label, odds, stake, line,
     year: state.year, status: "open", payout: 0,
   };
   state.tbets.push(bet);
   saveState();
   return bet;
-}
-
-/* Évalue un défi sur le tournoi réellement joué */
-function evalPropReal(rec, code) {
-  const t = CALENDAR[rec.index];
-  const matches = rec.type === "bracket"
-    ? rec.rounds.flat()
-    : rec.rr.A.concat(rec.rr.B, rec.sf, [rec.final]);
-  const mk = rec.markets;
-  if (code === "finale_decider") {
-    const final = rec.type === "bracket" ? rec.rounds[rec.rounds.length - 1][0] : rec.final;
-    return final.score.length === t.bestOf;
-  }
-  if (code === "bagel")
-    return matches.some(m => m && m.score && m.score.some(s => (s[0] === 6 && s[1] === 0) || (s[0] === 0 && s[1] === 6)));
-  if (code === "marathon")
-    return matches.some(m => m && m.score && m.score.reduce((s, x) => s + x[0] + x[1], 0) > mk.marathonThreshold);
-  if (code === "star_out") {
-    const qfIdx = rec.roundsNames.indexOf("QF");
-    for (let r = 0; r < qfIdx; r++)
-      if (rec.rounds[r].some(m => m.winner !== null && m.winner !== mk.star && (m.p1 === mk.star || m.p2 === mk.star)))
-        return true;
-    return false;
-  }
-  if (code === "seeds_out") {
-    const r16Idx = rec.roundsNames.indexOf("R16");
-    let out = 0;
-    mk.top8seeds.forEach(pid => {
-      for (let r = 0; r < r16Idx; r++)
-        if (rec.rounds[r].some(m => m.winner !== null && m.winner !== pid && (m.p1 === pid || m.p2 === pid))) { out++; break; }
-    });
-    return out >= 3;
-  }
-  return false;
 }
 
 /* Tous les matchs joués d'un tournoi terminé */
@@ -2168,13 +2326,6 @@ function allMatchesReal(rec) {
     : rec.rr.A.concat(rec.rr.B, rec.sf, [rec.final]);
 }
 
-/* Nombre de jeux de la finale réellement jouée */
-function finaleGamesReal(rec) {
-  const final = rec.type === "bracket" ? rec.rounds[rec.rounds.length - 1][0] : rec.final;
-  if (!final || !final.score) return 0;
-  return final.score.reduce((s, x) => s + x[0] + x[1], 0);
-}
-
 /* % réel de jeux de service gagnés sur l'ensemble du tournoi */
 function holdPctReal(rec) {
   let held = 0, total = 0;
@@ -2182,39 +2333,6 @@ function holdPctReal(rec) {
     if (m && m.sv) { held += m.sv[0]; total += m.sv[1]; }
   });
   return total > 0 ? 100 * held / total : 0;
-}
-
-/* Score(s) de set le(s) plus fréquent(s) du tournoi (ex aequo tous gagnants) */
-function topScoresReal(rec) {
-  const keys = ["6-0", "6-1", "6-2", "6-3", "6-4", "7-5", "7-6"];
-  const counts = {};
-  keys.forEach(k => { counts[k] = 0; });
-  allMatchesReal(rec).forEach(m => {
-    if (m && m.score) m.score.forEach(x => {
-      const key = Math.max(x[0], x[1]) + "-" + Math.min(x[0], x[1]);
-      if (key in counts) counts[key]++;
-    });
-  });
-  const mx = Math.max.apply(null, keys.map(k => counts[k]));
-  return mx > 0 ? keys.filter(k => counts[k] === mx) : [];
-}
-
-/* Parcours réel du champion : index d'élimination comparable aux lignes du marché */
-function realRunIdx(rec) {
-  const cp = customPlayer();
-  if (!cp) return null;
-  if (rec.type === "bracket") {
-    if (!rec.entrants.includes(cp.id)) return null;
-    for (let r = 0; r < rec.rounds.length; r++)
-      if (rec.rounds[r].some(m => m.winner !== null && m.winner !== cp.id && (m.p1 === cp.id || m.p2 === cp.id)))
-        return r;
-    return rec.rounds.length; // champion du tournoi
-  }
-  if (!rec.entrants.includes(cp.id)) return null;
-  if (rec.recap && rec.recap.champion === cp.id) return 3;
-  if (rec.final.p1 === cp.id || rec.final.p2 === cp.id) return 2;
-  if (rec.sf.some(m => m.p1 === cp.id || m.p2 === cp.id)) return 1;
-  return 0;
 }
 
 /* Contrôle antidopage : 5 % de risque à l'issue du tournoi → 3 mois de suspension */
@@ -2227,101 +2345,56 @@ function runDopingControl(rec, t) {
   }
 }
 
-/* Ce qui s'est réellement passé — le « pourquoi » du gain ou de la perte */
-function runLabelReal(rec, runIdx) {
-  if (runIdx === null) return "non qualifié pour le tournoi";
-  if (rec.type !== "bracket") {
-    return ["sorti en poules", "éliminé en demi-finale", "battu en finale", "a gagné le Masters"][runIdx];
-  }
-  if (runIdx >= rec.rounds.length) return "a gagné le tournoi";
-  const names = { R128: "éliminé au 1er tour", R64: rec.roundsNames[0] === "R128" ? "éliminé au 2e tour" : "éliminé au 1er tour",
-    R32: "éliminé avant les 8es", R16: "éliminé en 8es de finale", QF: "éliminé en quarts", SF: "éliminé en demi-finale", F: "battu en finale" };
-  return names[rec.roundsNames[runIdx]] || "éliminé (" + rec.roundsNames[runIdx] + ")";
+/* Totaux réels d'aces et de doubles fautes du tournoi (stats des matchs joués) */
+function acesRealTotal(rec) {
+  return allMatchesReal(rec).reduce((s, m) => s + (m && m.stats ? m.stats.aces[0] + m.stats.aces[1] : 0), 0);
+}
+function dfRealTotal(rec) {
+  return allMatchesReal(rec).reduce((s, m) => s + (m && m.stats ? m.stats.df[0] + m.stats.df[1] : 0), 0);
 }
 function tbetResultInfo(rec, b) {
-  const t = CALENDAR[rec.index];
-  const mk = rec.markets || {};
+  const frLine = x => String(x).replace(".", ",");
   if (b.market === "winner")
     return "Vainqueur réel : " + getPlayer(rec.recap.champion).name;
-  if (b.market === "run") {
-    const cp = customPlayer();
-    return (cp ? cp.name + " " : "") + runLabelReal(rec, realRunIdx(rec));
-  }
-  if (b.market === "ouf")
-    return "Finale jouée en " + finaleGamesReal(rec) + " jeux (ligne à " + String(b.line).replace(".", ",") + ")";
+  if (b.market === "oua")
+    return acesRealTotal(rec) + " aces dans le tournoi (ligne à " + frLine(b.line) + ")";
+  if (b.market === "oud")
+    return dfRealTotal(rec) + " doubles fautes dans le tournoi (ligne à " + frLine(b.line) + ")";
   if (b.market === "ouh")
-    return "Services gagnés sur le tournoi : " + holdPctReal(rec).toFixed(1).replace(".", ",") + " % (ligne à " + String(b.line).replace(".", ",") + " %)";
-  if (b.market === "top") {
-    const tops = topScoresReal(rec);
-    return "Score le plus fréquent : " + (tops.length ? tops.join(" et ") : "—");
-  }
-  // Défis fun
-  const matches = allMatchesReal(rec).filter(m => m && m.score);
-  if (b.pick === "finale_decider") {
-    const final = rec.type === "bracket" ? rec.rounds[rec.rounds.length - 1][0] : rec.final;
-    return "Finale jouée en " + final.score.length + " sets";
-  }
-  if (b.pick === "bagel") {
-    const n = matches.reduce((s, m) => s + m.score.filter(x => (x[0] === 6 && x[1] === 0) || (x[0] === 0 && x[1] === 6)).length, 0);
-    return n > 0 ? n + " set" + (n > 1 ? "s" : "") + " 6-0 infligé" + (n > 1 ? "s" : "") : "Aucun 6-0 dans le tournoi";
-  }
-  if (b.pick === "marathon") {
-    const longest = matches.reduce((mx, m) => Math.max(mx, m.score.reduce((s, x) => s + x[0] + x[1], 0)), 0);
-    return "Match le plus long : " + longest + " jeux (seuil " + mk.marathonThreshold + ")";
-  }
-  if (b.pick === "star_out") {
-    const star = mk.star;
-    const qfIdx = rec.roundsNames.indexOf("QF");
-    let outAt = null;
-    for (let r = 0; r < rec.rounds.length; r++)
-      if (rec.rounds[r].some(m => m.winner !== null && m.winner !== star && (m.p1 === star || m.p2 === star))) { outAt = r; break; }
-    const name = getPlayer(star).name;
-    if (outAt === null) return name + " a gagné le tournoi";
-    return name + " " + runLabelReal(rec, outAt) + (outAt >= qfIdx ? " (a atteint les quarts)" : "");
-  }
-  if (b.pick === "seeds_out") {
-    const r16Idx = rec.roundsNames.indexOf("R16");
-    let out = 0;
-    (mk.top8seeds || []).forEach(pid => {
-      for (let r = 0; r < r16Idx; r++)
-        if (rec.rounds[r].some(m => m.winner !== null && m.winner !== pid && (m.p1 === pid || m.p2 === pid))) { out++; break; }
-    });
-    return out + " tête" + (out > 1 ? "s" : "") + " de série top 8 tombée" + (out > 1 ? "s" : "") + " avant les 8es (il en fallait 3)";
-  }
+    return "Services gagnés sur le tournoi : " + holdPctReal(rec).toFixed(1).replace(".", ",") + " % (ligne à " + frLine(b.line) + " %)";
   return "";
 }
 
 /* Résolution des paris de tournoi (appelée à la fin du tournoi) */
 function resolveTournamentBets(rec) {
-  const open = (state.tbets || []).filter(b => b.tourneyId === rec.id && b.status === "open");
+  const open = (state.tbets || []).filter(b => b.tourneyId === rec.id && b.status === "open" && b.kind === "tournament");
   if (open.length === 0) return [];
-  const runIdx = realRunIdx(rec);
   open.forEach(b => {
     let won = false;
     if (b.market === "winner") won = rec.recap.champion === b.pick;
-    else if (b.market === "run") won = runIdx !== null && runIdx >= b.pick;
-    else if (b.market === "ouf") {
-      const g = finaleGamesReal(rec);
-      won = b.pick === "over" ? g > b.line : g < b.line;
+    else if (b.market === "oua") {
+      const v = acesRealTotal(rec);
+      won = b.pick === "over" ? v > b.line : v < b.line;
+    } else if (b.market === "oud") {
+      const v = dfRealTotal(rec);
+      won = b.pick === "over" ? v > b.line : v < b.line;
     } else if (b.market === "ouh") {
       const p = holdPctReal(rec);
       won = b.pick === "over" ? p > b.line : p < b.line;
-    } else if (b.market === "top") {
-      won = topScoresReal(rec).includes(b.pick);
-    } else won = evalPropReal(rec, b.pick);
+    }
     b.status = won ? "won" : "lost";
     b.result = tbetResultInfo(rec, b); // le fait réel qui justifie le paiement (ou non)
     if (won) {
       b.payout = Math.round(b.stake * b.odds);
       state.cash = (state.cash || 0) + b.payout;
+      state.betStats.returned += b.payout;
     }
   });
   return open;
 }
 
 
-/* Prize money total distribué par tournoi (constant) + part attendue du solde
-   à un stade donné de la saison (ligne guide du graphique). */
+/* Prize money total distribué par tournoi (constant) */
 function tournamentPool(t) {
   const prz = PRIZE[PRIZE_BY_TOURNEY[t.id]];
   if (t.cat === "FINALS") return 8 * prz.PARTICIPATION + 12 * prz.RR_WIN + 2 * prz.SF_WIN + prz.F_WIN;
@@ -2330,23 +2403,6 @@ function tournamentPool(t) {
     : { R64: 32, R32: 16, R16: 8, QF: 4, SF: 2, F: 1, W: 1 };
   return Object.entries(counts).reduce((s, [r, c]) => s + c * (prz[r] || 0), 0);
 }
-function expectedBankPace() {
-  // [{label, value}] : patrimoine attendu à ce stade = cash conservé + part des
-  // mises de saison déjà « réalisée » (les paris se remplissent au rythme du pool)
-  const totalPool = CALENDAR.reduce((s, t) => s + tournamentPool(t), 0);
-  const staked = state.bets.reduce((s, b) => s + b.amount, 0);
-  const kept = state.bankroll - staked; // cash de départ (avant paris de tournoi, EV neutre)
-  let cum = 0;
-  const out = [{ label: "Départ", value: kept }];
-  CALENDAR.forEach(t => {
-    const rec = state.tournaments[t.id];
-    if (!rec || rec.status !== "done") return;
-    cum += tournamentPool(t);
-    out.push({ label: t.city, value: kept + staked * cum / totalPool });
-  });
-  return out;
-}
-
 /* ---------- Import CSV ---------- */
 /* Format : Nom;Drapeau(emoji);Catégorie;FR(oui/non)[;Terre;Gazon;Dur;Indoor;Force;Endurance;Adresse;Tactique;Service;Mental]
    — séparateur , ou ;. Seul le nom est obligatoire. Les 10 compétences (1-10) sont
