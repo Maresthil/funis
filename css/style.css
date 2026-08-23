@@ -1325,3 +1325,218 @@ tr.top-cut td { border-bottom: 2.5px dashed var(--gold); }
 .rnd-btn.rnd-current:not(.active) { border-color: #2478ff; color: #2478ff; }
 .round-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 10px; }
 @media (max-width: 640px) { .round-grid { grid-template-columns: 1fr; } }
+
+/* ============ v26 : Mon club (page Joueurs) & stats enrichies ============ */
+.club-sec {
+  font-family: "Barlow Condensed", sans-serif;
+  font-size: 18px; font-weight: 800; letter-spacing: .09em; text-transform: uppercase;
+  color: #1d3557; margin: 18px 0 8px; display: flex; align-items: center; gap: 10px;
+}
+.club-sec::after { content: ""; flex: 1; height: 2px; background: linear-gradient(90deg, #d4a72c, transparent); border-radius: 2px; }
+.club-grid { margin-bottom: 4px; }
+.club-grid .pmini { border-color: rgba(212, 167, 44, .6); background: linear-gradient(135deg, #fffdf5, #fff); }
+.stat-board h3 .surf-note { font-size: 11px; background: #eef1f6; color: #5d6d88; }
+.ex-games small { display: block; font-size: 9.5px; font-weight: 600; letter-spacing: .04em; }
+
+/* ============================================================
+   v27 — 🎖 Pastille classement + page Ma carrière (XP)
+   ============================================================ */
+#xp-chip {
+  background: linear-gradient(135deg, rgba(255,217,119,.16), rgba(255,255,255,.08));
+  border: 1px solid rgba(255,217,119,.55);
+  color: #ffd977;
+  border-radius: 999px;
+  padding: 5px 12px;
+  font-size: 14px;
+  font-weight: 800;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#xp-chip:hover { background: rgba(255,217,119,.25); }
+
+.btn-xp {
+  background: linear-gradient(135deg, #6d4fc2, #3f2d80);
+  color: #ffe9a8;
+  border: 1px solid rgba(255,217,119,.5);
+}
+.btn-xp:hover { filter: brightness(1.15); }
+
+/* --- hero --- */
+.xp-hero {
+  background: radial-gradient(120% 160% at 50% -20%, #4a3aa0 0%, #241a55 45%, #101332 100%);
+  border: 1px solid rgba(255,217,119,.35);
+  border-radius: 18px;
+  padding: 26px 18px 20px;
+  text-align: center;
+  margin-bottom: 16px;
+  box-shadow: 0 12px 40px rgba(0,0,0,.4);
+}
+.xp-hat { color: #b9cdf1; font-size: 14px; font-weight: 700; }
+.xp-big-label {
+  color: #ffd977; text-transform: uppercase; letter-spacing: 3px;
+  font-size: 12px; margin-top: 10px; opacity: .9;
+}
+.xp-big {
+  font-size: 64px; font-weight: 900; line-height: 1.05; color: #ffd977;
+  text-shadow: 0 4px 24px rgba(255,217,119,.35);
+  font-family: "Archivo Black", "Arial Black", sans-serif;
+}
+.xp-sub { color: #dbe7ff; font-size: 14px; margin-top: 6px; }
+.xp-bar {
+  height: 14px; border-radius: 999px; overflow: hidden;
+  background: rgba(255,255,255,.12);
+  border: 1px solid rgba(255,255,255,.18);
+  margin: 14px auto 4px; max-width: 420px;
+}
+.xp-bar > span {
+  display: block; height: 100%;
+  background: linear-gradient(90deg, #ffd977, #ffb347);
+  border-radius: 999px;
+  transition: width .6s ease;
+}
+.xp-bar-lbl { color: #ffd977; font-size: 12px; font-weight: 700; }
+.xp-kpis { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+.xp-kpi {
+  background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.14);
+  border-radius: 12px; padding: 8px 14px; min-width: 84px;
+}
+.xp-kpi b { display: block; font-size: 22px; color: #fff; }
+.xp-kpi span { font-size: 11.5px; color: #b9cdf1; }
+
+/* --- cartes de la page --- */
+.xp-card { margin-bottom: 16px; }
+.xp-card h3 { margin: 0 0 12px; font-size: 16px; }
+
+/* --- échelle des classements (cartes claires) --- */
+.xp-ladder { display: flex; flex-wrap: wrap; gap: 6px; }
+.xp-rung {
+  flex: 1 1 56px; min-width: 56px; max-width: 120px; text-align: center;
+  background: #eef1f6; border: 1px solid #dfe6f0;
+  border-radius: 10px; padding: 6px 2px;
+}
+.xp-rung b { display: block; font-size: 14px; color: #8b98af; }
+.xp-rung span { font-size: 10px; color: #a5b1c6; }
+.xp-rung.done { background: #fdf3d7; border-color: #ecd28a; }
+.xp-rung.done b { color: #9a7412; }
+.xp-rung.done span { color: #b8963c; }
+.xp-rung.cur {
+  background: linear-gradient(135deg, #ffd977, #ffb347);
+  border-color: #e8b64a; box-shadow: 0 3px 12px rgba(212,167,44,.45);
+  transform: scale(1.06);
+}
+.xp-rung.cur b { color: #01173f; font-size: 15px; }
+.xp-rung.cur span { color: #4a3a10; font-weight: 700; }
+
+/* --- sources d'XP --- */
+.xp-srcs { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 8px; }
+.xp-src {
+  display: flex; align-items: center; gap: 8px;
+  background: #f6f8fc; border: 1px solid #e4e9f2;
+  border-radius: 10px; padding: 8px 10px;
+}
+.xs-ico { font-size: 18px; }
+.xs-lbl { flex: 1; font-size: 12.5px; color: #45536e; }
+.xs-val { font-size: 14px; color: #7b8aa6; white-space: nowrap; }
+.xp-src.pos .xs-val { color: #1d9e56; }
+.xp-src.neg .xs-val { color: #d23c3c; }
+
+/* --- goals --- */
+.xp-goals { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 8px; }
+.xp-goal {
+  display: flex; align-items: center; gap: 10px;
+  background: #f8fafd; border: 1px solid #e4e9f2;
+  border-radius: 12px; padding: 9px 11px;
+}
+.xp-goal:not(.got) .xg-ico { opacity: .55; filter: grayscale(.7); }
+.xp-goal.got { background: #eafaf0; border-color: #9adbb4; }
+.xg-ico { font-size: 22px; }
+.xg-txt { flex: 1; min-width: 0; }
+.xg-lbl { font-size: 12.5px; color: #33415c; font-weight: 600; }
+.xp-goal.got .xg-lbl { color: #14532d; }
+.xg-sub { font-size: 11px; color: #98a5bb; margin-top: 1px; }
+.xp-goal.got .xg-sub { color: #1d9e56; font-weight: 700; }
+.xg-xp {
+  font-weight: 800; font-size: 13px; color: #9a7412;
+  background: #fdf3d7; border: 1px solid #ecd28a;
+  border-radius: 8px; padding: 3px 7px; white-space: nowrap;
+}
+
+/* --- journal --- */
+.xp-journal { display: flex; flex-direction: column; gap: 4px; max-height: 460px; overflow-y: auto; }
+.xp-line {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 5px 8px; border-radius: 8px; background: #f6f8fc;
+  font-size: 12.5px;
+}
+.xl-xp { min-width: 42px; text-align: right; font-weight: 800; }
+.xl-xp.pos { color: #1d9e56; }
+.xl-xp.neg { color: #d23c3c; }
+.xl-xp.star { color: #b8860b; }
+.xl-lbl { flex: 1; color: #45536e; }
+.xl-yr { color: #98a5bb; font-size: 11px; }
+.xp-line.lvl { border: 1px solid #ecd28a; background: #fdf3d7; }
+.xp-line.lvl .xl-lbl { color: #8a6d1a; font-weight: 800; }
+.xp-line.lvl.down { border-color: #f2b8b8; background: #fdecec; }
+.xp-line.lvl.down .xl-lbl { color: #b34040; }
+.xp-empty { color: #6b7a94; font-size: 13px; }
+
+/* --- note de départ à la création --- */
+.cp-start-note {
+  margin-top: 12px; padding: 10px 12px; border-radius: 10px;
+  background: rgba(255,217,119,.08); border: 1px solid rgba(255,217,119,.35);
+  color: #ffe9a8; font-size: 12.5px; line-height: 1.45;
+}
+
+@media (max-width: 480px) {
+  #xp-chip { font-size: 12.5px; padding: 4px 9px; }
+  .xp-big { font-size: 48px; }
+  .xp-kpi { min-width: 72px; padding: 6px 10px; }
+  .xp-kpi b { font-size: 18px; }
+  .xp-rung { flex: 1 1 48px; min-width: 48px; }
+  .xp-goals, .xp-srcs { grid-template-columns: 1fr; }
+}
+
+/* ============================================================
+   v28 — mercato, forme du moment, records cliquables
+   ============================================================ */
+/* Le mercato : les joueurs de la saison passée mis en avant */
+.fav-item.fav-prev { border-color: rgba(255,217,119,.45); background: rgba(255,217,119,.07); }
+.fav-item.fav-prev.selected { border-color: #ffd977; }
+
+/* Forme du moment (carte joueur, fond sombre) */
+.pcard-form { margin-top: 14px; }
+.pf-note { font-size: 11px; color: #b9cdf1; font-weight: 400; text-transform: none; letter-spacing: 0; margin-left: 6px; }
+.pf-chips { display: flex; align-items: center; gap: 5px; margin: 6px 0 10px; flex-wrap: wrap; }
+.pf-chip {
+  width: 24px; height: 24px; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 900;
+}
+.pf-chip.w { background: rgba(74,222,128,.22); color: #7dedaa; border: 1px solid rgba(74,222,128,.5); }
+.pf-chip.l { background: rgba(255,120,120,.18); color: #ffa8a8; border: 1px solid rgba(255,120,120,.45); }
+.pf-arrow { font-size: 10.5px; color: #8fa3cc; margin-left: 4px; }
+.pf-list { display: flex; flex-direction: column; gap: 4px; }
+.pf-line {
+  display: flex; align-items: center; gap: 9px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12);
+  border-radius: 9px; padding: 5px 9px; cursor: pointer;
+  font-size: 12.5px; color: #dbe7ff;
+}
+.pf-line:hover { border-color: rgba(255,217,119,.6); background: rgba(255,217,119,.08); }
+.pf-res {
+  min-width: 22px; height: 22px; border-radius: 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11.5px; font-weight: 900; flex-shrink: 0;
+}
+.pf-res.w { background: rgba(74,222,128,.22); color: #7dedaa; }
+.pf-res.l { background: rgba(255,120,120,.18); color: #ffa8a8; }
+.pf-body { flex: 1; min-width: 0; }
+.pf-detail { display: block; font-size: 11px; color: #9db1d8; }
+
+@media (max-width: 480px) {
+  .pf-chip { width: 21px; height: 21px; font-size: 11px; }
+}
+
+/* v29 : la fiche d'un match ouverte depuis une carte joueur s'empile AU-DESSUS */
+#modal-overlay.over-card { z-index: 500; }

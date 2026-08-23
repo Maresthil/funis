@@ -6,7 +6,7 @@
 
 "use strict";
 
-const STORAGE_KEY = "funis_save_v16";
+const STORAGE_KEY = "funis_save_v18";
 const TBET_SIMS = 100;      // simulations du tableau réel (point par point) pour coter les paris de tournoi
 const TBET_MIN = 100;       // mise minimale d'un pari de tournoi
 
@@ -38,7 +38,7 @@ const PRIZE_TAX_RATE = 0.40;// taxes sur le prize money du champion (prélevées
 const STAFF_RATE = 0.20;    // part du staff sur le prize money net de taxes
 const TRAVEL_COST = 500000; // frais de saison (déplacements & hébergement), répartis par tournoi — débités SEULEMENT si ton champion joue
 const MATCH_MK_SIMS = 200;  // simulations (point par point) pour coter les marchés d'un match
-const DOPE_COST = 10000;    // prix d'une dose de dopage (payée en direct)
+const DOPE_COST = 40000;    // prix d'une dose de dopage (débitée en direct)
 const BET_PLAYERS = 5;      // ton champion + les 4 joueurs de TON CLUB (suivis toute la saison)
 const ROSTER_SIZE = 127;    // 127 joueurs de plateau + ton champion = 128
 /* Total de compétences du champion = la MOYENNE du plateau (équité) :
@@ -244,6 +244,7 @@ function newSeason(rawPlayers) {
     trained: {},            // pid -> true si n'a pas joué le tournoi précédent (bonus « entraîné »)
     syringes: SEASON_SYRINGES, // seringues de dopage restantes
     suspended: {},          // pid -> mois (décimal) de fin de suspension
+    xp: freshXp(),          // v27 : expérience de carrière (classement 40 → -15)
     currentIndex: 0,          // index du prochain tournoi dans CALENDAR
     tournaments: {},          // id -> record
     points: {},               // playerId -> points cumulés
@@ -816,8 +817,10 @@ function createPointMatch(idA, idB, rec) {
     win: [0, 0], ue: [0, 0], ptsWon: [0, 0],
     streakPts: [0, 0], streakGames: [0, 0],
     spSaved: [0, 0], mpSaved: [0, 0],
+    spComeback: [0, 0], mpComeback: [0, 0], // sets gagnés après BS sauvée / match gagné après BM sauvée
   };
   const curPtsStreak = [0, 0], curGamesStreak = [0, 0];
+  const curSpSaved = [0, 0]; // balles de set sauvées dans le set EN COURS
   let events = [{ t: "start", server: S.serverIsA ? "A" : "B" }];
 
   const isDecider = () => S.setsA === setsToWin - 1 && S.setsB === setsToWin - 1;
@@ -872,7 +875,7 @@ function createPointMatch(idA, idB, rec) {
       else win = rnd() < Math.min(1, p2 / (1 - dfP));
     }
     const winnerSide = win ? serverSide : 1 - serverSide;
-    if (ball.sp !== null && ball.sp !== winnerSide) stats.spSaved[winnerSide]++;
+    if (ball.sp !== null && ball.sp !== winnerSide) { stats.spSaved[winnerSide]++; curSpSaved[winnerSide]++; }
     if (ball.mp !== null && ball.mp !== winnerSide) stats.mpSaved[winnerSide]++;
     if (ace) { stats.aces[serverSide]++; stats.win[serverSide]++; }
     else if (df) { stats.df[serverSide]++; }
@@ -902,6 +905,10 @@ function createPointMatch(idA, idB, rec) {
   function endSet() {
     const setIdx = S.sets.length;
     S.sets.push([S.gA, S.gB]);
+    // Set gagné après avoir sauvé une balle de set dans CE set : un comeback
+    const setWinner = S.gA > S.gB ? 0 : 1;
+    if (curSpSaved[setWinner] > 0) stats.spComeback[setWinner]++;
+    curSpSaved[0] = 0; curSpSaved[1] = 0;
     if (S.gA > S.gB) S.setsA++; else S.setsB++;
     events.push({ t: "set", set: setIdx, score: [S.gA, S.gB], setsA: S.setsA, setsB: S.setsB, winner: S.gA > S.gB ? "A" : "B" });
     S.gA = 0; S.gB = 0;
@@ -953,6 +960,9 @@ function createPointMatch(idA, idB, rec) {
     }
   }
   function buildRes() {
+    // Match gagné après avoir sauvé au moins une balle de match : un miracle
+    const wSide = S.setsA > S.setsB ? 0 : 1;
+    if (stats.mpSaved[wSide] > 0) stats.mpComeback[wSide] = 1;
     return {
       winner: S.setsA > S.setsB ? idA : idB,
       sets: S.sets, tiebreaks: S.tiebreaks,
@@ -963,6 +973,7 @@ function createPointMatch(idA, idB, rec) {
         win: stats.win, ue: stats.ue, ptsWon: stats.ptsWon,
         streakPts: stats.streakPts, streakGames: stats.streakGames,
         spSaved: stats.spSaved, mpSaved: stats.mpSaved,
+        spComeback: stats.spComeback, mpComeback: stats.mpComeback,
         mins: Math.round(S.totalPoints * 0.55 + S.sets.length * 4),
       },
     };
@@ -1018,6 +1029,8 @@ function applyBracketResult(rec, roundIdx, matchIdx, res) {
   }
   // Paris de match / de tour : règlement instantané (le solde vit en direct)
   resolveOpenMatchBets(rec);
+  // v27 : l'expérience de ton champion évolue à chaque match joué
+  xpAfterChampionMatch(rec, match);
   // Tournoi terminé ?
   const final = rec.rounds[rec.rounds.length - 1][0];
   if (final.winner !== null && rec.status === "active") finalizeTournament(rec);
@@ -1055,6 +1068,7 @@ function finalizeTournament(rec) {
   runDopingControl(rec, t);
   rec.recap.tbets = resolveTournamentBets(rec);
   settleTournamentFinance(rec); // 💶 prize net crédité, frais débités : la banque bouge
+  xpAfterTournament(rec);       // 🎖 goals, bonus de résultat, partenaires du club
   state.currentIndex = rec.index + 1;
   takeSnapshot(t);
   saveState();
@@ -1202,6 +1216,8 @@ function applyFinalsResult(rec, phase, key, matchIdx, res) {
   }
   // Paris de match / de tour : règlement instantané (le solde vit en direct)
   resolveOpenMatchBets(rec);
+  // v27 : l'expérience de ton champion évolue à chaque match joué
+  xpAfterChampionMatch(rec, match);
   saveState();
   return res;
 }
@@ -1243,6 +1259,7 @@ function finalizeFinals(rec) {
   runDopingControl(rec, t);
   rec.recap.tbets = resolveTournamentBets(rec);
   settleTournamentFinance(rec); // 💶 prize net crédité, frais débités : la banque bouge
+  xpAfterTournament(rec);       // 🎖 goals, bonus de résultat, partenaires du club
   state.currentIndex = rec.index + 1;
   takeSnapshot(t);
   saveState();
@@ -1263,6 +1280,7 @@ function playerStatsSeason(pid) {
     // v21 : stats détaillées (issues de la simulation point par point)
     aces: 0, df: 0, fsIn: 0, fsTot: 0, winners: 0, ue: 0,
     spSaved: 0, mpSaved: 0, minutes: 0,
+    spComeback: 0, mpComeback: 0, // sets gagnés après BS sauvée / matchs gagnés après BM sauvée
     bestStreakPts: 0, bestStreakGames: 0,
   };
   function addMatch(m, surfKey) {
@@ -1289,6 +1307,8 @@ function playerStatsSeason(pid) {
       st.fsIn += m.stats.fs[k][0]; st.fsTot += m.stats.fs[k][1];
       st.winners += m.stats.win[k]; st.ue += m.stats.ue[k];
       st.spSaved += m.stats.spSaved[k]; st.mpSaved += m.stats.mpSaved[k];
+      if (m.stats.spComeback) st.spComeback += m.stats.spComeback[k];
+      if (m.stats.mpComeback) st.mpComeback += m.stats.mpComeback[k];
       st.minutes += m.stats.mins;
       st.bestStreakPts = Math.max(st.bestStreakPts, m.stats.streakPts[k]);
       st.bestStreakGames = Math.max(st.bestStreakGames, m.stats.streakGames[k]);
@@ -1316,7 +1336,8 @@ function playerStatsSeason(pid) {
 
 const CAREER_STAT_KEYS = ["wins", "losses", "setsW", "setsL", "gamesW", "gamesL", "tbW", "tbL",
   "bpConv", "bpSaved", "bpOppSaved", "bpOppConv", "tournamentsPlayed", "finals",
-  "aces", "df", "fsIn", "fsTot", "winners", "ue", "spSaved", "mpSaved", "minutes"];
+  "aces", "df", "fsIn", "fsTot", "winners", "ue", "spSaved", "mpSaved", "minutes",
+  "spComeback", "mpComeback"];
 const CAREER_MAX_KEYS = ["bestStreakPts", "bestStreakGames"]; // records : on garde le MAX
 
 function playerStats(pid) {
@@ -1351,7 +1372,7 @@ function seasonMatchStatsSeason() {
       if (!m || m.winner === null || !m.score) return;
       totalMatches++;
       const games = m.score.reduce((s, x) => s + x[0] + x[1], 0);
-      (t.bestOf === 5 ? matchListBo5 : matchListBo3).push({ tid: t.id, m, games, year: state.year });
+      (t.bestOf === 5 ? matchListBo5 : matchListBo3).push({ tid: t.id, m, games, mins: m.stats ? m.stats.mins : 0, year: state.year });
       if (t.bestOf === 5) lenBo5[m.score.length] = (lenBo5[m.score.length] || 0) + 1;
       else lenBo3[m.score.length] = (lenBo3[m.score.length] || 0) + 1;
       m.score.forEach(s => {
@@ -1389,7 +1410,7 @@ function addCustomPlayer(info) {
     flag: info.flag || "🏳️",
     cat: "Mon champion",
     fr: info.flag === "🇫🇷",
-    classement: info.classement,
+    classement: (state.xp && CLASSEMENTS_LADDER[xpLevelIdx(state.xp.total)]) || CLASSEMENTS_LADDER[0], // v27 : gagné à l'XP, départ 40
     club: (info.club || "").trim(),
     custom: true,
     sk: normalizeSkills(info.sk),
@@ -1442,11 +1463,15 @@ function archiveSeason() {
   cm.totalSets += ms.totalSets;
   const keepM = m => ({ p1: m.p1, p2: m.p2, winner: m.winner, score: m.score, tiebreaks: m.tiebreaks });
   const extremes = list => {
-    const s = list.slice().sort((a, b) => b.games - a.games);
-    return s.slice(0, 3).concat(s.slice(-3));
+    // Records en JEUX et en DURÉE : on garde les extrêmes des deux classements (dédupliqués)
+    const byGames = list.slice().sort((a, b) => b.games - a.games);
+    const byMins = list.filter(e => (e.mins || 0) > 0).sort((a, b) => b.mins - a.mins);
+    const keep = new Set();
+    byGames.slice(0, 3).concat(byGames.slice(-3), byMins.slice(0, 3), byMins.slice(-3)).forEach(e => keep.add(e));
+    return Array.from(keep);
   };
-  extremes(ms.matchListBo5).forEach(e => cm.listBo5.push({ tid: e.tid, games: e.games, year: e.year, m: keepM(e.m) }));
-  extremes(ms.matchListBo3).forEach(e => cm.listBo3.push({ tid: e.tid, games: e.games, year: e.year, m: keepM(e.m) }));
+  extremes(ms.matchListBo5).forEach(e => cm.listBo5.push({ tid: e.tid, games: e.games, mins: e.mins || 0, year: e.year, m: keepM(e.m) }));
+  extremes(ms.matchListBo3).forEach(e => cm.listBo3.push({ tid: e.tid, games: e.games, mins: e.mins || 0, year: e.year, m: keepM(e.m) }));
   state.career.match = cm;
   // Résumé de la saison (bilan : paris taxés à 30 % si positifs, prize money −33 % −10 %, −100 k€ de frais)
   const settle = seasonSettlement();
@@ -1481,6 +1506,8 @@ function startNextSeason() {
     careerMoney: {},
     defending: {},
     bankroll: settle.final,
+    xp: state.xp || freshXp(), // v27 : l'expérience est un acquis de carrière
+    prevClub: (state.favorites || []).filter(pid => !customPlayer() || pid !== customPlayer().id), // v28 : le mercato
   };
   // Prize money de carrière : la saison écoulée rejoint le cumul
   state.players.forEach(p => { keep.careerMoney[p.id] = careerMoneyOf(p.id); });
@@ -1505,6 +1532,8 @@ function startNextSeason() {
   state.careerMoney = keep.careerMoney;
   state.defending = keep.defending;   // classement ATP glissant : entrées & têtes de série
   state.suspended = keep.suspended;
+  state.xp = keep.xp;                 // v27 : classement / goals / journal conservés
+  state.prevClub = keep.prevClub;     // v28 : mercato — 3 recrues à conserver, 1 transfert
   state.bankroll = keep.bankroll;     // solde reporté (peut être négatif : la dette suit)
   state.cash = keep.bankroll;         // le solde bancaire live repart de là
   if (keep.matchSpeed !== undefined) state.matchSpeed = keep.matchSpeed;
@@ -1555,6 +1584,15 @@ function setFavorites(pids) {
   pids.forEach(pid => { if (!getPlayer(pid)) throw new Error("Joueur inconnu."); });
   const cp = customPlayer();
   if (cp && !pids.includes(cp.id)) throw new Error("Ton champion est forcément le capitaine de son club.");
+  /* v28 — LE MERCATO : à partir de la saison 2, le club conserve exactement
+     3 recrues de la saison passée et signe 1 transfert. */
+  if (cp && Array.isArray(state.prevClub) && state.prevClub.length) {
+    const recruits = pids.filter(pid => pid !== cp.id);
+    const kept = recruits.filter(pid => state.prevClub.includes(pid)).length;
+    const KEEP = BET_PLAYERS - 2; // 3 conservés
+    if (kept !== KEEP)
+      throw new Error("Mercato : conserve exactement " + KEEP + " joueurs de la saison passée et signe 1 transfert (" + kept + " conservé" + (kept > 1 ? "s" : "") + ").");
+  }
   state.favorites = pids.slice();
   state.betsPlaced = true; // plus de paris de saison : la saison démarre ici
   saveState();
@@ -1616,6 +1654,280 @@ function seasonSettlement() {
 }
 
 /* ============================================================
+   EXPÉRIENCE & CLASSEMENT FRANÇAIS (v27)
+   Ton champion démarre classé 40 et grimpe l'échelle FFT jusqu'à
+   −15 en engrangeant de l'XP : victoires, PERFS contre mieux
+   classés (les CONTRES coûtent !), goals accomplis, résultats de
+   tournois… et la forme de tes partenaires d'entraînement du club.
+   ============================================================ */
+const CLASSEMENTS_LADDER = ["40", "30/5", "30/4", "30/3", "30/2", "30/1", "30",
+  "15/5", "15/4", "15/3", "15/2", "15/1", "15",
+  "5/6", "4/6", "3/6", "2/6", "1/6", "0", "-2/6", "-4/6", "-15"];
+/* Seuils cumulés : passer l'échelon k coûte 50 + 15k XP (total ≈ 4 515 pour −15) */
+const XP_STEPS = (() => {
+  const out = [0];
+  let c = 0;
+  for (let k = 1; k < CLASSEMENTS_LADDER.length; k++) { c += 50 + 15 * k; out.push(c); }
+  return out;
+})();
+const XP_WIN = 6; // XP de base par victoire (les perfs s'y ajoutent)
+
+/* Les GOALS : hauts faits qui rapportent de l'XP (une seule fois chacun) */
+const XP_GOALS = [
+  { code: "premiere_win", icon: "🎉", xp: 40,  label: "Première victoire sur le circuit" },
+  { code: "wins10",       icon: "🔟", xp: 60,  label: "10 victoires en carrière" },
+  { code: "wins50",       icon: "⚔️", xp: 150, label: "50 victoires en carrière" },
+  { code: "wins100",      icon: "🏛️", xp: 300, label: "100 victoires en carrière" },
+  { code: "streak10",     icon: "🔥", xp: 150, label: "10 victoires d'affilée" },
+  { code: "surf5_terre",   icon: "🟤", xp: 30,  label: "5 victoires sur terre battue" },
+  { code: "surf10_terre",  icon: "🟤", xp: 60,  label: "10 victoires sur terre battue" },
+  { code: "surf20_terre",  icon: "🟤", xp: 120, label: "20 victoires sur terre battue" },
+  { code: "surf5_gazon",   icon: "🌱", xp: 30,  label: "5 victoires sur gazon" },
+  { code: "surf10_gazon",  icon: "🌱", xp: 60,  label: "10 victoires sur gazon" },
+  { code: "surf20_gazon",  icon: "🌱", xp: 120, label: "20 victoires sur gazon" },
+  { code: "surf5_dur",     icon: "🟦", xp: 30,  label: "5 victoires sur dur" },
+  { code: "surf10_dur",    icon: "🟦", xp: 60,  label: "10 victoires sur dur" },
+  { code: "surf20_dur",    icon: "🟦", xp: 120, label: "20 victoires sur dur" },
+  { code: "surf5_indoor",  icon: "🏟️", xp: 30,  label: "5 victoires en indoor" },
+  { code: "surf10_indoor", icon: "🏟️", xp: 60,  label: "10 victoires en indoor" },
+  { code: "surf20_indoor", icon: "🏟️", xp: 120, label: "20 victoires en indoor" },
+  { code: "mp_comeback",  icon: "🧯", xp: 120, label: "Gagner un match après avoir sauvé une balle de match" },
+  { code: "save3mp",      icon: "😱", xp: 150, label: "Sauver 3 balles de match dans un match gagné" },
+  { code: "two_sets_down", icon: "🧗", xp: 150, label: "Renverser un match après 2 sets de retard" },
+  { code: "marathon5h",   icon: "⏱️", xp: 100, label: "Jouer un match de plus de 5 heures" },
+  { code: "aces25",       icon: "🎯", xp: 120, label: "Servir 25 aces dans un match" },
+  { code: "aces100",      icon: "💣", xp: 150, label: "Servir 100 aces sur un seul tournoi" },
+  { code: "fs90",         icon: "🚀", xp: 100, label: "Plus de 90 % de premières balles sur un match" },
+  { code: "beat_no1",     icon: "👑", xp: 200, label: "Battre le n°1 mondial" },
+  { code: "bagel",        icon: "🥯", xp: 50,  label: "Infliger un 6-0" },
+  { code: "double_bagel", icon: "🍩", xp: 150, label: "Gagner 6-0 6-0" },
+  { code: "no_break",     icon: "🧱", xp: 80,  label: "Gagner un match sans jamais perdre son service" },
+  { code: "tb3",          icon: "🎲", xp: 100, label: "Gagner 3 tie-breaks dans le même match" },
+  { code: "giant3",       icon: "🗡️", xp: 120, label: "Battre 3 têtes de série dans le même tournoi" },
+  { code: "first_title",  icon: "🏆", xp: 150, label: "Décrocher son premier titre" },
+  { code: "gc_title",     icon: "👑", xp: 300, label: "Gagner un Grand Chelem" },
+  { code: "masters_title", icon: "💎", xp: 250, label: "Gagner le Masters" },
+  { code: "two_surfaces", icon: "🌍", xp: 150, label: "Des titres sur 2 surfaces différentes" },
+  { code: "top10",        icon: "🔝", xp: 200, label: "Entrer dans le top 10 mondial" },
+  { code: "world_no1",    icon: "🥇", xp: 400, label: "Devenir n°1 mondial" },
+  { code: "streak20",     icon: "🌋", xp: 250, label: "20 victoires d'affilée" },
+  { code: "wins200",      icon: "🗿", xp: 400, label: "200 victoires en carrière" },
+  { code: "titles5",      icon: "🖐️", xp: 250, label: "5 titres dans la même saison" },
+  { code: "all_gc",       icon: "🌏", xp: 400, label: "Gagner les 4 Grands Chelems en carrière" },
+  { code: "club_title",   icon: "🎽", xp: 80,  label: "Un joueur de ton club gagne un tournoi" },
+  { code: "club_gc",      icon: "🏰", xp: 150, label: "Un joueur de ton club gagne un Grand Chelem" },
+  { code: "club_masters", icon: "💠", xp: 120, label: "Un joueur de ton club gagne le Masters" },
+  { code: "money1m",      icon: "💰", xp: 80,  label: "1 million d'euros de gains en carrière" },
+  { code: "money5m",      icon: "🤑", xp: 150, label: "5 millions d'euros de gains en carrière" },
+  { code: "money20m",     icon: "🏦", xp: 300, label: "20 millions d'euros de gains en carrière" },
+  { code: "bet_odds10",   icon: "🍀", xp: 80,  label: "Gagner un pari à une cote d'au moins 10" },
+  { code: "bet_combo5",   icon: "🎰", xp: 100, label: "Gagner un combiné à une cote d'au moins 5" },
+  { code: "bet_100k",     icon: "💸", xp: 120, label: "Encaisser 100 000 € de paris sur une saison" },
+];
+
+function freshXp() {
+  return { total: 0, wins: 0, winStreak: 0,
+    surfWins: { terre: 0, gazon: 0, dur: 0, indoor: 0 },
+    goals: {}, log: [] };
+}
+function xpLevelIdx(total) {
+  let i = 0;
+  while (i + 1 < XP_STEPS.length && total >= XP_STEPS[i + 1]) i++;
+  return i;
+}
+/* Classement actuel + progression vers le suivant */
+function championClassement() {
+  const xp = state.xp || freshXp();
+  const i = xpLevelIdx(xp.total);
+  return {
+    idx: i, label: CLASSEMENTS_LADDER[i],
+    next: i + 1 < CLASSEMENTS_LADDER.length ? CLASSEMENTS_LADDER[i + 1] : null,
+    cur: XP_STEPS[i],
+    nextAt: i + 1 < XP_STEPS.length ? XP_STEPS[i + 1] : null,
+    total: xp.total,
+  };
+}
+function xpAdd(amount, t, label, tid) {
+  if (!state.xp) state.xp = freshXp();
+  const before = xpLevelIdx(state.xp.total);
+  state.xp.total = Math.max(0, state.xp.total + amount);
+  state.xp.log.push({ t, xp: amount, label, tid: tid || null, year: state.year });
+  const after = xpLevelIdx(state.xp.total);
+  if (after !== before) {
+    state.xp.log.push({ t: after > before ? "up" : "down", xp: 0,
+      label: (after > before ? "📈 NOUVEAU CLASSEMENT : " : "📉 Reclassement : ") + CLASSEMENTS_LADDER[after],
+      tid: tid || null, year: state.year });
+  }
+  const cp = customPlayer();
+  if (cp) cp.classement = CLASSEMENTS_LADDER[after];
+}
+function xpGoal(code, tid) {
+  if (!state.xp) state.xp = freshXp();
+  if (state.xp.goals[code]) return false;
+  const g = XP_GOALS.find(x => x.code === code);
+  if (!g) return false;
+  state.xp.goals[code] = { year: state.year, tid: tid || null };
+  xpAdd(g.xp, "goal", g.icon + " GOAL : " + g.label, tid);
+  return true;
+}
+function rollingRankOf(pid) {
+  return sortedByRolling().findIndex(p => p.id === pid) + 1;
+}
+
+/* Après CHAQUE match de ton champion : victoire, perf/contre, goals de match */
+function xpAfterChampionMatch(rec, m) {
+  const cp = customPlayer();
+  if (!cp || (m.p1 !== cp.id && m.p2 !== cp.id) || m.walkover || m.winner === null || !m.score) return;
+  if (!state.xp) state.xp = freshXp();
+  const t = CALENDAR[rec.index];
+  const isP1 = m.p1 === cp.id, k = isP1 ? 0 : 1;
+  const won = m.winner === cp.id;
+  const opp = isP1 ? m.p2 : m.p1;
+  const myRank = rollingRankOf(cp.id), oppRank = rollingRankOf(opp);
+  const oppName = getPlayer(opp).name;
+  if (won) {
+    state.xp.wins++;
+    state.xp.winStreak++;
+    const sk = SURFACE_TO_SKILL[t.surface];
+    state.xp.surfWins[sk]++;
+    xpAdd(XP_WIN, "win", "Victoire contre " + oppName, rec.id);
+    if (oppRank < myRank) {
+      // v29 : la PERF est fonction de l'écart de classement (6 XP + 1 par 3 places, plafond 70)
+      const gap = myRank - oppRank;
+      const bonus = Math.min(70, 8 + Math.round(gap / 3));
+      xpAdd(bonus, "perf", "🔥 PERF ! " + oppName + " (n°" + oppRank + ") tombe alors que tu es n°" + myRank + " — écart de " + gap + " places", rec.id);
+    }
+    xpGoal("premiere_win", rec.id);
+    if (state.xp.wins >= 10) xpGoal("wins10", rec.id);
+    if (state.xp.wins >= 50) xpGoal("wins50", rec.id);
+    if (state.xp.wins >= 100) xpGoal("wins100", rec.id);
+    if (state.xp.wins >= 200) xpGoal("wins200", rec.id);
+    if (state.xp.winStreak >= 10) xpGoal("streak10", rec.id);
+    if (state.xp.winStreak >= 20) xpGoal("streak20", rec.id);
+    if (state.xp.surfWins[sk] >= 5) xpGoal("surf5_" + sk, rec.id);
+    if (state.xp.surfWins[sk] >= 10) xpGoal("surf10_" + sk, rec.id);
+    if (state.xp.surfWins[sk] >= 20) xpGoal("surf20_" + sk, rec.id);
+    if (oppRank === 1) xpGoal("beat_no1", rec.id);
+    const st = m.stats;
+    if (st) {
+      if (st.mpComeback && st.mpComeback[k]) xpGoal("mp_comeback", rec.id);
+      if (st.mpSaved[k] >= 3) xpGoal("save3mp", rec.id);
+      if (st.aces[k] >= 25) xpGoal("aces25", rec.id);
+      if (st.mins > 300) xpGoal("marathon5h", rec.id);
+      if (st.fs[k][1] >= 40 && st.fs[k][0] / st.fs[k][1] > 0.9) xpGoal("fs90", rec.id);
+    }
+    // Renverser 2 sets de retard (Grand Chelem)
+    if (m.score.length === 5 && m.score.slice(0, 2).every(s => (isP1 ? s[0] < s[1] : s[1] < s[0])))
+      xpGoal("two_sets_down", rec.id);
+    // 6-0 infligé / double bagel
+    const bagels = m.score.filter(s => (isP1 ? s[0] === 6 && s[1] === 0 : s[1] === 6 && s[0] === 0)).length;
+    if (bagels >= 1) xpGoal("bagel", rec.id);
+    if (bagels >= 2 && m.score.length === 2) xpGoal("double_bagel", rec.id);
+    // Sans perdre son service (aucun break subi)
+    if (m.bp) {
+      const theirs = isP1 ? m.bp[1] : m.bp[0];
+      if (theirs[0] === 0) xpGoal("no_break", rec.id);
+    }
+    // 3 tie-breaks gagnés dans le même match
+    if (m.tiebreaks) {
+      let tbWon = 0;
+      Object.keys(m.tiebreaks).forEach(si => {
+        const s = m.score[si];
+        if (s && (isP1 ? s[0] > s[1] : s[1] > s[0])) tbWon++;
+      });
+      if (tbWon >= 3) xpGoal("tb3", rec.id);
+    }
+  } else {
+    state.xp.winStreak = 0;
+    if (oppRank > myRank) {
+      // v29 : le CONTRE est fonction de l'écart de classement (4 XP + 1 par 5 places, plafond 35)
+      const gap = oppRank - myRank;
+      const malus = Math.min(35, 4 + Math.round(gap / 5));
+      xpAdd(-malus, "contre", "❄️ CONTRE : battu par " + oppName + " (n°" + oppRank + ") alors que tu es n°" + myRank + " — écart de " + gap + " places", rec.id);
+    }
+  }
+}
+
+/* À CHAQUE fin de tournoi : bonus de résultat, goals de tournoi, partenaires du club */
+function xpAfterTournament(rec) {
+  const cp = customPlayer();
+  if (!cp) return;
+  if (!state.xp) state.xp = freshXp();
+  const t = CALENDAR[rec.index];
+  const r = rec.recap.results[cp.id];
+  if (r) {
+    const bonus = r.round === "W" ? (t.cat === "GC" ? 180 : t.cat === "FINALS" ? 150 : 110)
+      : r.round === "F" ? (t.cat === "GC" ? 70 : t.cat === "FINALS" ? 60 : 50)
+      : r.round === "SF" ? (t.cat === "GC" ? 35 : t.cat === "FINALS" ? 30 : 25) : 0;
+    if (bonus) xpAdd(bonus, "res", "🏁 " + t.name + " : " +
+      (r.round === "W" ? "TITRE !" : r.round === "F" ? "finale" : "demi-finale"), rec.id);
+    if (r.round === "W") {
+      xpGoal("first_title", rec.id);
+      if (t.cat === "GC") xpGoal("gc_title", rec.id);
+      if (t.cat === "FINALS") xpGoal("masters_title", rec.id);
+      const surfTitles = new Set((state.titles[cp.id] || [])
+        .map(tid => (CALENDAR.find(c => c.id === tid) || {}).surface));
+      if (surfTitles.size >= 2) xpGoal("two_surfaces", rec.id);
+      // v29 : 5 titres dans la même saison
+      const seasonTitles = CALENDAR.filter(c => {
+        const r2 = state.tournaments[c.id];
+        return r2 && r2.recap && r2.recap.champion === cp.id;
+      }).length;
+      if (seasonTitles >= 5) xpGoal("titles5", rec.id);
+      // v29 : les 4 Grands Chelems en carrière
+      const gcIds = CALENDAR.filter(c => c.cat === "GC").map(c => c.id);
+      const won = new Set(state.titles[cp.id] || []);
+      if (gcIds.every(id => won.has(id))) xpGoal("all_gc", rec.id);
+    }
+    // Goals à l'échelle du tournoi : 100 aces, 3 têtes de série battues
+    let acesT = 0, seedKills = 0;
+    allMatchesReal(rec).forEach(m => {
+      if (!m || m.walkover || m.winner === null || (m.p1 !== cp.id && m.p2 !== cp.id)) return;
+      const k = m.p1 === cp.id ? 0 : 1;
+      if (m.stats) acesT += m.stats.aces[k];
+      const opp = m.p1 === cp.id ? m.p2 : m.p1;
+      if (m.winner === cp.id && rec.seedsMap && rec.seedsMap[opp]) seedKills++;
+    });
+    if (acesT >= 100) xpGoal("aces100", rec.id);
+    if (seedKills >= 3) xpGoal("giant3", rec.id);
+  }
+  // Tes partenaires d'entraînement : leurs résultats font bouger TON niveau
+  (state.favorites || []).filter(pid => pid !== cp.id).forEach(pid => {
+    const rr = rec.recap.results[pid];
+    if (!rr) return;
+    const p = getPlayer(pid);
+    if (rr.round === "W") {
+      xpAdd(t.cat === "GC" ? 20 : 15, "club", "🎾 " + p.name + " gagne " + t.city + " — l'entraînement avec lui paie !", rec.id);
+      xpGoal("club_title", rec.id);
+      if (t.cat === "GC") xpGoal("club_gc", rec.id);
+      if (t.cat === "FINALS") xpGoal("club_masters", rec.id);
+    }
+    else if (rr.round === "F") xpAdd(10, "club", "🎾 " + p.name + " en finale à " + t.city + " — le club rayonne", rec.id);
+    else if (rr.round === "SF") xpAdd(6, "club", "🎾 " + p.name + " en demie à " + t.city, rec.id);
+    else {
+      const firstOut = rec.type === "bracket" ? rr.round === rec.roundsNames[0] : (rr.round === "RR" && (rr.rrWins || 0) === 0);
+      if (firstOut) xpAdd(-3, "club", "💤 " + p.name + " sorti d'entrée à " + t.city + " — entraînement morose", rec.id);
+    }
+  });
+  // Jalons mondiaux
+  const myRank = rollingRankOf(cp.id);
+  if (myRank <= 10) xpGoal("top10", rec.id);
+  if (myRank === 1) xpGoal("world_no1", rec.id);
+  // v29 : gains de carrière
+  const cm = careerMoneyOf(cp.id);
+  if (cm >= 1e6) xpGoal("money1m", rec.id);
+  if (cm >= 5e6) xpGoal("money5m", rec.id);
+  if (cm >= 20e6) xpGoal("money20m", rec.id);
+  // v29 : exploits de parieur
+  (state.tbets || []).forEach(b => {
+    if (b.status !== "won") return;
+    if (b.odds >= 10) xpGoal("bet_odds10", rec.id);
+    if (b.legs && b.legs.length >= 2 && b.odds >= 5) xpGoal("bet_combo5", rec.id);
+  });
+  if (state.betStats && state.betStats.returned >= 100000) xpGoal("bet_100k", rec.id);
+}
+
+/* ============================================================
    FORME (entraîné / frais / fatigué / cramé) & DOPAGE
    ============================================================ */
 function fatigueOf(pid) { return (state.fatigue && state.fatigue[pid]) || 0; }
@@ -1671,7 +1983,7 @@ function beginTournamentForms(index) {
   });
 }
 
-/* Dopage : booste un joueur de ton club pour le tournoi à venir.
+/* Dopage : booste TON CHAMPION (et lui seul) pour le tournoi à venir.
    La dose coûte DOPE_COST € — débitée en direct, pas de solde = pas de dopage. */
 function applyDoping(tourneyId, pid) {
   const rec = state.tournaments[tourneyId];
@@ -1679,7 +1991,8 @@ function applyDoping(tourneyId, pid) {
   if (marketsClosed(rec)) throw new Error("Trop tard : le tournoi a commencé.");
   if ((state.syringes || 0) <= 0) throw new Error("Plus de seringues cette saison.");
   if ((state.cash || 0) < DOPE_COST) throw new Error("La dose coûte " + fmtEuro(DOPE_COST) + " — il te manque du cash.");
-  if (!state.favorites.includes(pid)) throw new Error("Tu ne peux doper qu'un joueur de ton club.");
+  const cpD = customPlayer();
+  if (!cpD || pid !== cpD.id) throw new Error("Seul ton champion peut être dopé.");
   if (!rec.entrants.includes(pid)) throw new Error("Ce joueur n'est pas au tableau.");
   if (rec.doped !== undefined && rec.doped !== null) throw new Error("Un seul joueur dopé par tournoi.");
   rec.doped = pid;

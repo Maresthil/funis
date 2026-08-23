@@ -53,6 +53,7 @@ document.addEventListener("DOMContentLoaded", () => {
     b.addEventListener("click", () => navigate(b.dataset.nav));
   });
   $("#bank-chip").addEventListener("click", () => navigate("favorites"));
+  $("#xp-chip").addEventListener("click", () => navigate("career"));
 });
 
 function showMain() {
@@ -79,6 +80,7 @@ function navigate(view, params = {}) {
   else if (view === "favorites") renderFavorites(el);
   else if (view === "players") renderPlayers(el);
   else if (view === "stats") renderStats(el);
+  else if (view === "career") renderCareerXP(el);
   window.scrollTo({ top: 0 });
 }
 
@@ -103,7 +105,8 @@ function showOnboarding(step) {
         <span>🏆 4 Grands Chelems, 9 Masters 1000 et le Masters final — <strong>5 saisons</strong> pour décrocher la place de n°1 mondial</span>
         <span>🎰 Parie comme un pro sur <strong>FUN'BET</strong> : vainqueurs, combinés aux cotes multipliées, scores exacts, aces, tie-breaks…</span>
         <span>🏦 Gère ta banque en direct : prize money taxé à <strong>40 %</strong>, <strong>20 %</strong> pour le staff, <strong>500 000 €</strong> de frais par saison</span>
-        <span>💉 Dope tes joueurs pour un coup de pouce… à 10 000 € la dose et 5 % de risque de suspension</span>
+        <span>💉 Dope <strong>ton champion</strong> pour un coup de pouce… à 40 000 € la dose et 5 % de risque de suspension</span>
+        <span>🎖 Pars <strong>classé 40</strong> et grimpe vers le mythique <strong>−15</strong> à l’expérience : goals, perfs, exploits…</span>
       </div>
     </div>
     <div class="onboard-card" id="onboard-content"></div>`;
@@ -122,15 +125,26 @@ function renderFavoritesStep(container) {
   const cp = customPlayer();
   const picked = new Set((state.favorites || []).filter(pid => !cp || pid !== cp.id));
   const need = BET_PLAYERS - (cp ? 1 : 0);
+  /* v28 — LE MERCATO (saison 2+) : conserve 3 joueurs de la saison passée, signe 1 transfert */
+  const prevSet = new Set(cp && Array.isArray(state.prevClub) ? state.prevClub : []);
+  const mercato = prevSet.size > 0;
+  const KEEP = BET_PLAYERS - 2, SIGN = need - KEEP;
 
-  container.innerHTML = `
+  container.innerHTML = mercato ? `
+    <h2>Saison ${state.year} — le mercato de ${clubName()} 🔁</h2>
+    <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
+      Ton club <strong>conserve ${KEEP} joueurs</strong> de la saison passée (🎽) et signe
+      <strong>${SIGN} transfert</strong> parmi les autres légendes. Choisis qui reste… et qui débarque :
+      leurs résultats à l'entraînement font bouger ton expérience 🎖.</p>
+    ${cp ? `<div class="fav-locked">⭐ ${flagHTML(cp.flag)} <strong>${cp.name}</strong> — capitaine de ${clubName()} 🔒</div>` : ""}` : `
     <h2>3 · Recrute les 4 joueurs de ${clubName()} 🎾</h2>
     <p style="color:#b9cdf1;font-size:13.5px;margin-bottom:14px">
       Ton club aligne <strong>${BET_PLAYERS} joueurs</strong> sur le circuit : ${cp ? `<strong>${cp.name}</strong>, ton champion et capitaine,` : "ton champion"}
       plus <strong>${need} recrues</strong> à choisir parmi les légendes. Tu <strong>suis</strong> les joueurs du club toute la saison :
       leurs matchs se jouent à la main (« Simuler le tournoi » s'arrête sur chacun) et eux seuls peuvent être dopés 💉.
       Les paris 🎰 se placent ensuite en direct : avant chaque tournoi, chaque tour et chaque match.</p>
-    ${cp ? `<div class="fav-locked">⭐ ${flagHTML(cp.flag)} <strong>${cp.name}</strong> — capitaine de ${clubName()} 🔒</div>` : ""}
+    ${cp ? `<div class="fav-locked">⭐ ${flagHTML(cp.flag)} <strong>${cp.name}</strong> — capitaine de ${clubName()} 🔒</div>` : ""}`;
+  container.innerHTML += `
     <input class="fav-search" id="fav-search" placeholder="🔍 Rechercher un joueur…">
     <div class="fav-grid" id="fav-grid" style="max-height:420px"></div>
     <div class="fav-actions">
@@ -142,19 +156,27 @@ function renderFavoritesStep(container) {
   function drawGrid(filter = "") {
     grid.innerHTML = "";
     const f = filter.toLowerCase();
-    state.players
+    const pool = state.players
       .filter(p => !p.custom)
-      .filter(p => p.name.toLowerCase().includes(f) || p.cat.toLowerCase().includes(f))
+      .filter(p => p.name.toLowerCase().includes(f) || p.cat.toLowerCase().includes(f));
+    (mercato ? pool.filter(p => prevSet.has(p.id)).concat(pool.filter(p => !prevSet.has(p.id))) : pool)
       .forEach(p => {
+        const isPrev = prevSet.has(p.id);
         const b = document.createElement("button");
-        b.className = "fav-item" + (picked.has(p.id) ? " selected" : "");
+        b.className = "fav-item" + (picked.has(p.id) ? " selected" : "") + (mercato && isPrev ? " fav-prev" : "");
         b.innerHTML = `<span class="f-flag">${flagHTML(p.flag)}</span>
-          <span style="flex:1"><strong>${p.name}</strong><span class="f-cat">${p.cat}</span></span>
+          <span style="flex:1"><strong>${p.name}</strong><span class="f-cat">${mercato && isPrev ? "🎽 au club en " + (state.year - 1) + " · " : ""}${p.cat}</span></span>
           ${picked.has(p.id) ? '<span class="fav-star">⭐</span>' : ""}
           <span class="mini-card-btn" title="Voir la carte de ${p.name}">🪪</span>`;
         b.addEventListener("click", () => {
-          if (picked.has(p.id)) picked.delete(p.id);
-          else if (picked.size < need) picked.add(p.id);
+          if (picked.has(p.id)) { picked.delete(p.id); refresh(); return; }
+          if (picked.size >= need) return;
+          if (mercato) {
+            const kept = Array.from(picked).filter(id => prevSet.has(id)).length;
+            if (isPrev && kept >= KEEP) return;          // déjà 3 conservés
+            if (!isPrev && (picked.size - kept) >= SIGN) return; // déjà 1 transfert
+          }
+          picked.add(p.id);
           refresh();
         });
         b.querySelector(".mini-card-btn").addEventListener("click", e => {
@@ -167,6 +189,15 @@ function renderFavoritesStep(container) {
   function refresh() {
     drawGrid($("#fav-search").value);
     const rem = need - picked.size;
+    if (mercato) {
+      const kept = Array.from(picked).filter(id => prevSet.has(id)).length;
+      const signed = picked.size - kept;
+      $("#fav-remaining").innerHTML = rem === 0
+        ? `<span style="color:#7dedaa">✓ Mercato bouclé : ${KEEP} conservés + ${SIGN} transfert</span>`
+        : `<span style="color:#ffd977">🎽 Conservés : ${kept}/${KEEP} · 🔁 Transfert : ${signed}/${SIGN}</span>`;
+      $("#fav-go").disabled = rem !== 0;
+      return;
+    }
     $("#fav-remaining").innerHTML = rem === 0
       ? `<span style="color:#7dedaa">✓ ${clubName()} est au complet (${BET_PLAYERS} joueurs)</span>`
       : `<span style="color:#ffd977">Encore ${rem} joueur${rem > 1 ? "s" : ""} à recruter</span>`;
@@ -246,12 +277,26 @@ function renderUpgradeStep(container) {
    du capital de départ, rouge en dessous). Clic : écran banque. */
 function updateBankChip() {
   const chip = $("#bank-chip");
-  if (!state || !state.betsPlaced) { chip.classList.add("hidden"); return; }
+  const xc = $("#xp-chip");
+  if (!state || !state.betsPlaced) {
+    chip.classList.add("hidden");
+    if (xc) xc.classList.add("hidden");
+    return;
+  }
   chip.classList.remove("hidden");
   const cash = Math.round(state.cash || 0);
   chip.textContent = "💶 " + fmtEuro(cash);
   chip.classList.toggle("up", cash > (state.bankroll || 0));
   chip.classList.toggle("down", cash < (state.bankroll || 0));
+  /* 🎖 La pastille CLASSEMENT (v27) : le rang actuel de ton champion,
+     clic → la page Ma carrière (XP, goals, journal). */
+  if (xc) {
+    if (!customPlayer() || !state.xp) { xc.classList.add("hidden"); }
+    else {
+      xc.classList.remove("hidden");
+      xc.textContent = "🎖 " + championClassement().label;
+    }
+  }
 }
 
 function renderRosterStep(container) {
@@ -328,11 +373,9 @@ function renderRosterStep(container) {
   });
 }
 
-/* ---------- Étape 2 : création de ton champion (le 128e joueur) ---------- */
-const CLASSEMENTS_FR = ["40", "30/5", "30/4", "30/3", "30/2", "30/1", "30",
-  "15/5", "15/4", "15/3", "15/2", "15/1", "15",
-  "5/6", "4/6", "3/6", "2/6", "1/6", "0", "-2/6", "-4/6", "-15"];
-
+/* ---------- Étape 2 : création de ton champion (le 128e joueur) ----------
+   v27 : le classement n'est plus choisi — tout le monde démarre classé 40
+   et grimpe l'échelle (jusqu'à −15) à l'expérience. */
 function renderPlayerStep(container) {
   // Ton champion a le MÊME total que la moyenne du plateau : son avantage,
   // c'est le profil sur mesure (et les +3 points par saison en carrière).
@@ -362,10 +405,8 @@ function renderPlayerStep(container) {
         <input class="cp-input" id="cp-club" placeholder="Mon club" maxlength="30">
         <label class="cp-label">Nationalité</label>
         <select class="cp-input" id="cp-pays">${countryOptions}</select>
-        <label class="cp-label">Classement (de 40 à -15)</label>
-        <select class="cp-input" id="cp-classement">
-          ${CLASSEMENTS_FR.map(c => `<option ${c === "30/1" ? "selected" : ""}>${c}</option>`).join("")}
-        </select>
+        <div class="cp-start-note">🎖 Tu démarres <strong>classé 40</strong>, comme tout débutant.
+        Victoires, goals et perfs te feront grimper l'échelle… jusqu'au mythique <strong>−15</strong>.</div>
       </div>
       <div class="bet-slip">
         <h3>⚙️ Tes ${TARGET} points de compétences</h3>
@@ -416,7 +457,6 @@ function renderPlayerStep(container) {
       name,
       flag: $("#cp-pays").value,
       club: $("#cp-club").value,
-      classement: $("#cp-classement").value,
       sk,
     });
     renderFavoritesStep(container);
@@ -966,7 +1006,7 @@ function renderTournament(el, tid, readOnly) {
 /* ============================================================
    ÉCRAN DE DÉBUT DE TOURNOI (v23)
    1. Présentation : ville, tenant du titre, dotation, qualifiés
-   2. 💉 Préparation spéciale (10 000 € la dose)
+   2. 💉 Préparation spéciale — ton champion uniquement (40 000 € la dose)
    3. 🎰 FUN'BET — le guichet du tournoi, façon site de paris pro
    ============================================================ */
 function renderTourneyPresentation(el, rec) {
@@ -1014,7 +1054,7 @@ function renderTourneyPresentation(el, rec) {
   el.appendChild(card);
 }
 
-/* 💉 Encadré dopage : booster un joueur de ton club pour ce tournoi */
+/* 💉 Encadré dopage (v27) : booster TON CHAMPION — et lui seul — pour ce tournoi */
 function renderDopingCard(el, rec) {
   const t = CALENDAR[rec.index];
   const card = document.createElement("div");
@@ -1041,11 +1081,18 @@ function renderDopingCard(el, rec) {
     el.appendChild(card);
     return;
   }
-  const cands = (state.favorites || []).filter(pid => rec.entrants.includes(pid));
-  if (!cands.length) return;
+  const cpD = customPlayer();
+  if (!cpD) return;
+  if (!rec.entrants.includes(cpD.id)) {
+    card.innerHTML = `<div class="mk-title">💉 Préparation spéciale — ${fmtEuro(DOPE_COST)} la dose</div>
+      <div class="dope-info">Réservée à <strong>ton champion</strong>… qui ne dispute pas ce tournoi.</div>`;
+    el.appendChild(card);
+    return;
+  }
+  const cands = [cpD.id];
   card.innerHTML = `<div class="mk-title">💉 Préparation spéciale — ${n} dose${n > 1 ? "s" : ""} restante${n > 1 ? "s" : ""} · ${fmtEuro(DOPE_COST)} la dose</div>
-    <div class="dope-info">Booste un joueur de ${clubName()} pour ce tournoi (débité en direct) : un vrai coup de pouce, zéro fatigue…
-    mais <strong>5 % de risque de contrôle positif</strong> à l'issue du tournoi → 3 mois de suspension.</div>`;
+    <div class="dope-info">Booste <strong>ton champion</strong> pour ce tournoi (débité en direct) : un vrai coup de pouce, zéro fatigue…
+    mais <strong>5 % de risque de contrôle positif</strong> à l'issue du tournoi → 3 mois de suspension. Lui seul peut être dopé.</div>`;
   const row = document.createElement("div");
   row.className = "mk-row";
   cands.forEach(pid => {
@@ -1391,6 +1438,46 @@ function renderBracketColumns(el, rec, roundFrom, roundTo, section, readOnly) {
    RÉCAP D'UN MATCH TERMINÉ — cliquer sur son cartouche dans le
    tableau rouvre sa fiche : score final, stats détaillées, paris
    ============================================================ */
+/* v28 : retrouve la position d'un match dans son tournoi (pour ouvrir sa fiche récap) */
+function findMatchCtx(rec, m) {
+  if (!rec || !m) return null;
+  if (rec.type === "bracket") {
+    for (let ri = 0; ri < rec.rounds.length; ri++) {
+      const mi = rec.rounds[ri].indexOf(m);
+      if (mi !== -1) return { kind: "bracket", roundIdx: ri, matchIdx: mi };
+    }
+    return null;
+  }
+  for (const g of ["A", "B"]) {
+    const mi = rec.rr[g].indexOf(m);
+    if (mi !== -1) return { kind: "rr", group: g, matchIdx: mi };
+  }
+  const si = rec.sf.indexOf(m);
+  if (si !== -1) return { kind: "sf", matchIdx: si };
+  if (rec.final === m) return { kind: "final" };
+  return null;
+}
+
+/* v28 : les n derniers matchs joués d'un joueur cette saison (ordre chronologique) */
+function lastMatchesOf(pid, n) {
+  const out = [];
+  CALENDAR.forEach((t, ti) => {
+    const rec = state.tournaments[t.id];
+    if (!rec) return;
+    const matches = rec.type === "bracket"
+      ? rec.rounds.flat()
+      : rec.rr.A.concat(rec.rr.B, rec.sf, [rec.final]);
+    matches.forEach(m => {
+      if (!m || m.winner === null || m.walkover || !m.score) return;
+      if (m.p1 !== pid && m.p2 !== pid) return;
+      // m.when est RELATIF au tournoi : on trie d'abord par tournoi du calendrier
+      out.push({ tid: t.id, rec, m, when: ti * 1e6 + (m.when ? m.when[0] * 1440 + m.when[1] : 0) });
+    });
+  });
+  out.sort((a, b) => a.when - b.when);
+  return out.slice(-n);
+}
+
 function openMatchSummary(rec, ctx) {
   const t = CALENDAR[rec.index];
   let m, roundLabel;
@@ -1446,6 +1533,8 @@ function openMatchSummary(rec, ctx) {
   const overlay = $("#modal-overlay");
   const modal = $("#modal-match");
   overlay.classList.remove("hidden");
+  // v29 : si une carte joueur est ouverte, la fiche du match passe PAR-DESSUS
+  overlay.classList.toggle("over-card", !$("#card-overlay").classList.contains("hidden"));
   modal.innerHTML = `
     <div class="m-head">
       <div>
@@ -1469,7 +1558,7 @@ function openMatchSummary(rec, ctx) {
   if (myBets.length) {
     $("#ms-bets").innerHTML = `<div class="mb-results">` + myBets.map(b => tbetLineHTML(b, true)).join("") + `</div>`;
   }
-  const close = () => { overlay.classList.add("hidden"); modal.innerHTML = ""; };
+  const close = () => { overlay.classList.add("hidden"); overlay.classList.remove("over-card"); modal.innerHTML = ""; };
   $("#ms-close").addEventListener("click", close);
   $("#ms-ok").addEventListener("click", close);
   overlay.onclick = e => { if (e.target === overlay) close(); };
@@ -2300,6 +2389,8 @@ function renderRecap(el, tid) {
   const actions = document.createElement("div");
   actions.style.cssText = "display:flex;gap:12px;flex-wrap:wrap";
   actions.appendChild(mkBtn("📋 Voir le tableau final", "btn btn-ghost", () => navigate("tournament", { id: tid, readOnly: true })));
+  if (customPlayer() && state.xp)
+    actions.appendChild(mkBtn(`🎖 Ma carrière — classé ${championClassement().label}`, "btn btn-xp", () => navigate("career")));
   actions.appendChild(mkBtn("📈 Classements", "btn btn-ghost", () => navigate("rankings")));
   if (state.currentIndex < CALENDAR.length) {
     const next = CALENDAR[state.currentIndex];
@@ -2573,16 +2664,22 @@ function renderStats(el) {
     ms.totalSets));
   el.appendChild(anatGrid);
 
-  /* Marathons & expéditions : les 3 matchs les plus longs / les plus courts (en jeux) */
-  function extremesBoard(title, emoji, list) {
+  /* Marathons & expéditions : les 3 matchs les plus longs / les plus courts,
+     classés EN JEUX et EN DURÉE (v26) */
+  function hm(mins) {
+    const h = Math.floor(mins / 60), mn = mins % 60;
+    return h + "h" + (mn < 10 ? "0" + mn : mn);
+  }
+  function extremesBoard(title, emoji, list, byMins) {
     const card = document.createElement("div");
     card.className = "card stat-board";
-    card.innerHTML = `<h3>${emoji} ${title}</h3>`;
-    if (list.length === 0) {
+    card.innerHTML = `<h3>${emoji} ${title} <span class="surf-note">${byMins ? "par durée ⏱" : "par jeux 🔢"}</span></h3>`;
+    const usable = byMins ? list.filter(x => (x.mins || 0) > 0) : list;
+    if (usable.length === 0) {
       card.insertAdjacentHTML("beforeend", `<div class="bet-empty" style="color:var(--text-dim)">Pas encore de match joué.</div>`);
       return card;
     }
-    const sorted = list.slice().sort((a, b) => b.games - a.games);
+    const sorted = usable.slice().sort((a, b) => byMins ? (b.mins - a.mins) : (b.games - a.games));
     const sections = [
       { label: "🐢 Les plus longs", rows: sorted.slice(0, 3) },
       { label: "⚡ Les plus courts", rows: sorted.slice(-3).reverse() },
@@ -2593,16 +2690,21 @@ function renderStats(el) {
         const t = CALENDAR.find(c => c.id === r.tid);
         const w = getPlayer(r.m.winner);
         const l = getPlayer(r.m.winner === r.m.p1 ? r.m.p2 : r.m.p1);
+        const rec2 = state.tournaments[r.tid];
+        const mctx = rec2 ? findMatchCtx(rec2, r.m) : null;
         const line = document.createElement("div");
         line.className = "extreme-line row-clickable";
-        line.title = "Voir la carte de " + w.name;
+        line.title = mctx ? "Voir la fiche du match" : "Voir la carte de " + w.name;
         line.innerHTML = `
-          <span class="ex-games">${r.games}<small>jeux</small></span>
+          <span class="ex-games">${byMins ? hm(r.mins) + "<small>durée</small>" : r.games + "<small>jeux</small>"}</span>
           <span class="ex-body">
             <span class="ex-players">${flagHTML(w.flag)} <strong>${w.name}</strong> bat ${flagHTML(l.flag)} ${l.name}</span>
-            <span class="ex-detail">${formatScore(r.m, true)} · ${flagHTML(t.country)} ${t.city}${(state.career && state.career.seasons.length && r.year) ? " " + r.year : ""}</span>
+            <span class="ex-detail">${formatScore(r.m, true)} · ${byMins ? r.games + " jeux" : (r.mins ? hm(r.mins) : "—")} · ${flagHTML(t.country)} ${t.city}${(state.career && state.career.seasons.length && r.year) ? " " + r.year : ""}</span>
           </span>`;
-        line.addEventListener("click", () => openPlayerCard(r.m.winner));
+        line.addEventListener("click", () => {
+          if (mctx) openMatchSummary(rec2, mctx);   // v28 : le détail du match
+          else openPlayerCard(r.m.winner);          // record archivé (saison passée) : la carte du vainqueur
+        });
         card.appendChild(line);
       });
     });
@@ -2611,8 +2713,10 @@ function renderStats(el) {
   el.insertAdjacentHTML("beforeend", `<div class="page-title" style="font-size:24px;margin-top:18px">Marathons &amp; expéditions</div>`);
   const exGrid = document.createElement("div");
   exGrid.className = "stats-grid";
-  exGrid.appendChild(extremesBoard("Grands Chelems", "🏆", ms.matchListBo5));
-  exGrid.appendChild(extremesBoard("Masters 1000 & Masters", "⚡", ms.matchListBo3));
+  exGrid.appendChild(extremesBoard("Grands Chelems", "🏆", ms.matchListBo5, false));
+  exGrid.appendChild(extremesBoard("Masters 1000 & Masters", "⚡", ms.matchListBo3, false));
+  exGrid.appendChild(extremesBoard("Grands Chelems", "🏆", ms.matchListBo5, true));
+  exGrid.appendChild(extremesBoard("Masters 1000 & Masters", "⚡", ms.matchListBo3, true));
   el.appendChild(exGrid);
 
   /* Records de carrière */
@@ -2661,13 +2765,34 @@ function renderStats(el) {
   const moneyRows = sortedByCareerMoney().slice(0, 10)
     .map(p => ({ pid: p.id, value: careerMoneyOf(p.id) }));
   recGrid.appendChild(recordBoard("Gains de carrière", "💼", moneyRows, v => fmtEuro(Math.round(v))));
-  // v21 : issues de la simulation point par point
-  const aceRows = all.map(x => ({ pid: x.p.id, value: x.st.aces, detail: x.st.df + " DF" }))
+  // v21/v26 : issues de la simulation point par point — avec la MOYENNE PAR MATCH
+  const avgTxt = (v, n) => n > 0 ? (Math.round(10 * v / n) / 10).toString().replace(".", ",") + "/match" : "—";
+  const perMatch = x => x.st.wins + x.st.losses;
+  const volumeRows = (getVal, getExtra) => all
+    .map(x => {
+      const n = perMatch(x);
+      return { pid: x.p.id, value: getVal(x.st), n, detail: avgTxt(getVal(x.st), n) + (getExtra ? " · " + getExtra(x.st) : "") };
+    })
     .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
-  recGrid.appendChild(recordBoard("Canonniers (aces)", "🎯", aceRows, v => fmtPts(v)));
-  const winRows = all.map(x => ({ pid: x.p.id, value: x.st.winners, detail: x.st.ue + " fautes directes" }))
+  recGrid.appendChild(recordBoard("Canonniers (aces)", "🎯",
+    volumeRows(st => st.aces, st => st.df + " DF"), v => fmtPts(v)));
+  recGrid.appendChild(recordBoard("Frappeurs (points gagnants)", "💥",
+    volumeRows(st => st.winners), v => fmtPts(v)));
+  recGrid.appendChild(recordBoard("Bâcheurs (fautes directes)", "🪣",
+    volumeRows(st => st.ue), v => fmtPts(v)));
+  // v26 : les rois du sauvetage — matchs et sets renversés après une balle de match / de set
+  const mpRows = all
+    .map(x => ({ pid: x.p.id, value: x.st.mpComeback || 0,
+      detail: x.st.mpSaved + " balle" + (x.st.mpSaved > 1 ? "s" : "") + " de match sauvée" + (x.st.mpSaved > 1 ? "s" : "") }))
     .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
-  recGrid.appendChild(recordBoard("Frappeurs (points gagnants)", "💥", winRows, v => fmtPts(v)));
+  recGrid.appendChild(recordBoard("Sauvés du gouffre (matchs gagnés après une balle de match)", "🧯",
+    mpRows, v => v + " match" + (v > 1 ? "s" : "")));
+  const spRows = all
+    .map(x => ({ pid: x.p.id, value: x.st.spComeback || 0,
+      detail: x.st.spSaved + " balle" + (x.st.spSaved > 1 ? "s" : "") + " de set sauvée" + (x.st.spSaved > 1 ? "s" : "") }))
+    .filter(r => r.value > 0).sort((a, b) => b.value - a.value).slice(0, 10);
+  recGrid.appendChild(recordBoard("Rois du sauvetage (sets gagnés après une balle de set)", "🛟",
+    spRows, v => v + " set" + (v > 1 ? "s" : "")));
   el.appendChild(recGrid);
 
   el.insertAdjacentHTML("beforeend", `<div class="page-sub" style="margin-top:6px;font-size:12px">
@@ -2678,11 +2803,43 @@ function renderStats(el) {
    JOUEURS — annuaire + cartes de personnage (style EA)
    ============================================================ */
 function renderPlayers(el) {
+  const club = (state.favorites || []).length > 0;
   el.insertAdjacentHTML("beforeend", `
     <div class="page-title">Les 128 joueurs</div>
     <div class="page-sub">Clique sur un joueur pour ouvrir sa carte : classement, prize money, palmarès et compétences.</div>
+    ${club ? `<div class="club-sec">🎾 Mon club — ${clubName()}</div>
+    <div class="players-grid club-grid" id="club-grid"></div>` : ""}
+    <div class="club-sec">🌍 Tout le circuit</div>
     <input class="players-search" id="players-search" placeholder="🔍 Rechercher un joueur ou une catégorie…">
     <div class="players-grid" id="players-grid"></div>`);
+
+  function miniTile(p) {
+    const rank = currentRank(p.id, "points");
+    const mini = document.createElement("button");
+    mini.className = "pmini" + (state.favorites.includes(p.id) ? " fav-mini" : "");
+    mini.innerHTML = `
+      <span class="pm-rank">${rank}</span>
+      <span class="pm-flag">${flagHTML(p.flag)}</span>
+      <span class="pm-body">
+        <span class="pm-name">${p.name}${state.favorites.includes(p.id) ? " ⭐" : ""}</span>
+        <span class="pm-cat">${p.cat}</span>
+      </span>
+      <span class="pm-surf">${bestSurfaceBadge(p)}</span>`;
+    mini.addEventListener("click", () => openPlayerCard(p.id));
+    return mini;
+  }
+
+  // 🎾 Mon club : le capitaine d'abord, puis les recrues par classement
+  if (club) {
+    const cg = $("#club-grid");
+    const cp = customPlayer();
+    const ids = state.favorites.slice().sort((a, b) => {
+      if (cp && a === cp.id) return -1;
+      if (cp && b === cp.id) return 1;
+      return currentRank(a, "points") - currentRank(b, "points");
+    });
+    ids.forEach(pid => cg.appendChild(miniTile(getPlayer(pid))));
+  }
 
   const grid = $("#players-grid");
   function draw(filter = "") {
@@ -2690,21 +2847,7 @@ function renderPlayers(el) {
     const f = filter.toLowerCase();
     sortedByPoints()
       .filter(p => p.name.toLowerCase().includes(f) || p.cat.toLowerCase().includes(f))
-      .forEach(p => {
-        const rank = currentRank(p.id, "points");
-        const mini = document.createElement("button");
-        mini.className = "pmini" + (state.favorites.includes(p.id) ? " fav-mini" : "");
-        mini.innerHTML = `
-          <span class="pm-rank">${rank}</span>
-          <span class="pm-flag">${flagHTML(p.flag)}</span>
-          <span class="pm-body">
-            <span class="pm-name">${p.name}${state.favorites.includes(p.id) ? " ⭐" : ""}</span>
-            <span class="pm-cat">${p.cat}</span>
-          </span>
-          <span class="pm-surf">${bestSurfaceBadge(p)}</span>`;
-        mini.addEventListener("click", () => openPlayerCard(p.id));
-        grid.appendChild(mini);
-      });
+      .forEach(p => grid.appendChild(miniTile(p)));
   }
   $("#players-search").addEventListener("input", e => draw(e.target.value));
   draw();
@@ -2725,6 +2868,7 @@ function bestSurfaceBadge(p) {
 function openPlayerCard(pid) {
   const p = getPlayer(pid);
   const stats = playerStats(pid);
+  const formLast = lastMatchesOf(pid, 10); // v28 : la forme du moment
   const rkP = currentRank(pid, "points");
   const rkM = currentRank(pid, "money");
   const best = bestSurface(p);
@@ -2733,6 +2877,8 @@ function openPlayerCard(pid) {
   const overlay = $("#card-overlay");
   const modal = $("#card-modal");
   overlay.classList.remove("hidden");
+  // v29 : ouvrir une carte repasse au-dessus d'une éventuelle fiche de match empilée
+  $("#modal-overlay").classList.remove("over-card");
 
   const skillBar = s => {
     const v = p.sk[s.key];
@@ -2816,11 +2962,36 @@ function openPlayerCard(pid) {
         <div class="pcard-coltitle">Palmarès</div>
         <div class="title-chips">${palmares}</div>
       </div>
+      <div class="pcard-form">
+        <div class="pcard-coltitle">Forme du moment <span class="pf-note">les 10 derniers matchs</span></div>
+        ${formLast.length ? `
+          <div class="pf-chips">${formLast.map(e => `<span class="pf-chip ${e.m.winner === pid ? "w" : "l"}">${e.m.winner === pid ? "V" : "D"}</span>`).join("")}<span class="pf-arrow">→ le plus récent</span></div>
+          <div class="pf-list">${formLast.slice().reverse().map((e, i) => {
+            const tt = CALENDAR.find(c => c.id === e.tid);
+            const won = e.m.winner === pid;
+            const opp = getPlayer(e.m.p1 === pid ? e.m.p2 : e.m.p1);
+            return `<div class="pf-line" data-fm="${i}" title="Voir la fiche du match">
+              <span class="pf-res ${won ? "w" : "l"}">${won ? "V" : "D"}</span>
+              <span class="pf-body">${won ? "bat" : "battu par"} ${flagHTML(opp.flag)} <strong>${opp.name}</strong>
+                <span class="pf-detail">${formatScore(e.m, true)} · ${flagHTML(tt.country)} ${tt.city}${e.m.when ? ` · 📅 ${matchWhenLabel(e.rec, e.m)}` : ""}</span></span>
+            </div>`;
+          }).join("")}</div>`
+        : `<span style="color:#9aa7ba;font-size:12px">Aucun match joué cette saison</span>`}
+      </div>
     </div>`;
 
   const close = () => { overlay.classList.add("hidden"); };
   $("#pc-close").addEventListener("click", close);
   overlay.onclick = e => { if (e.target === overlay) close(); };
+  // v29 : cliquer un match de la forme ouvre sa fiche récap PAR-DESSUS la carte —
+  // la fermer ramène sur la carte du joueur
+  const revLast = formLast.slice().reverse();
+  modal.querySelectorAll(".pf-line").forEach(el2 => el2.addEventListener("click", () => {
+    const e = revLast[parseInt(el2.dataset.fm, 10)];
+    const mctx = findMatchCtx(e.rec, e.m);
+    if (!mctx) return;
+    openMatchSummary(e.rec, mctx);
+  }));
 }
 
 /* Pourcentage façon "12.5%" (1 décimale si nécessaire, "—" si aucune donnée) */
@@ -2995,4 +3166,137 @@ function renderFavorites(el) {
       }).join(""));
   }
   el.appendChild(dop);
+}
+
+/* ============================================================
+   🎖 MA CARRIÈRE (v27) — la page de l'expérience & du classement
+   Accessible via la pastille 🎖 à droite de la banque.
+   Hero (classement + progression), échelle des 22 classements,
+   sources d'XP, les goals de carrière et le journal complet.
+   ============================================================ */
+function xpTournamentCity(tid) {
+  const rec = tid && state.tournaments && state.tournaments[tid];
+  return rec ? CALENDAR[rec.index].city : "";
+}
+
+function renderCareerXP(el) {
+  const cp = customPlayer();
+  if (!cp || !state.xp) { navigate("season"); return; }
+  const xp = state.xp;
+  const cc = championClassement();
+  const doneGoals = Object.keys(xp.goals || {}).length;
+
+  /* ----- HERO : le classement actuel, énorme, + la barre vers le suivant ----- */
+  const span = cc.nextAt !== null ? cc.nextAt - cc.cur : 1;
+  const into = cc.nextAt !== null ? Math.max(0, xp.total - cc.cur) : 1;
+  const pct = cc.nextAt !== null ? Math.max(2, Math.min(100, Math.round(into / span * 100))) : 100;
+  const hero = document.createElement("div");
+  hero.className = "xp-hero";
+  hero.innerHTML = `
+    <div class="xp-hat">${flagHTML(cp.flag)} ${cp.name} · ${clubName()}</div>
+    <div class="xp-big-label">classé</div>
+    <div class="xp-big">${cc.label}</div>
+    <div class="xp-sub">${cc.next
+      ? `Prochain palier : <strong>${cc.next}</strong> — encore <strong>${cc.nextAt - xp.total} XP</strong> à conquérir`
+      : "🏔️ −15 — tu as atteint le sommet absolu du tennis français !"}</div>
+    <div class="xp-bar"><span style="width:${pct}%"></span></div>
+    ${cc.next ? `<div class="xp-bar-lbl">${into} / ${span} XP vers ${cc.next}</div>` : ""}
+    <div class="xp-kpis">
+      <div class="xp-kpi"><b>${xp.total}</b><span>XP total</span></div>
+      <div class="xp-kpi"><b>${xp.wins || 0}</b><span>victoire${(xp.wins || 0) > 1 ? "s" : ""}</span></div>
+      <div class="xp-kpi"><b>${xp.winStreak || 0}</b><span>série en cours</span></div>
+      <div class="xp-kpi"><b>${doneGoals}/${XP_GOALS.length}</b><span>goals</span></div>
+    </div>`;
+  el.appendChild(hero);
+
+  /* ----- L'échelle des 22 classements ----- */
+  const lad = document.createElement("div");
+  lad.className = "card xp-card";
+  lad.innerHTML = `<h3>🪜 L'échelle — du classement 40 au mythique −15</h3>`;
+  const lrow = document.createElement("div");
+  lrow.className = "xp-ladder";
+  CLASSEMENTS_LADDER.forEach((c, i) => {
+    const d = document.createElement("div");
+    d.className = "xp-rung" + (i < cc.idx ? " done" : i === cc.idx ? " cur" : "");
+    d.innerHTML = `<b>${c}</b><span>${i === 0 ? "départ" : XP_STEPS[i] + " XP"}</span>`;
+    lrow.appendChild(d);
+  });
+  lad.appendChild(lrow);
+  el.appendChild(lad);
+
+  /* ----- D'où vient ton expérience ----- */
+  const sums = { goal: 0, win: 0, perf: 0, contre: 0, res: 0, club: 0 };
+  (xp.log || []).forEach(e => { if (sums[e.t] !== undefined) sums[e.t] += e.xp; });
+  const src = document.createElement("div");
+  src.className = "card xp-card";
+  src.innerHTML = `<h3>⚡ D'où vient ton expérience</h3>`;
+  const srow = document.createElement("div");
+  srow.className = "xp-srcs";
+  [["🏅", "Goals accomplis", sums.goal],
+   ["🎾", "Victoires (+" + XP_WIN + " chacune)", sums.win],
+   ["🔥", "Perfs — battre mieux classé que toi", sums.perf],
+   ["❄️", "Contres — perdre contre moins bien classé", sums.contre],
+   ["🏁", "Résultats en tournoi", sums.res],
+   ["🤝", "Ton club à l'entraînement", sums.club],
+  ].forEach(([ico, lbl, v]) => {
+    const d = document.createElement("div");
+    d.className = "xp-src" + (v > 0 ? " pos" : v < 0 ? " neg" : "");
+    d.innerHTML = `<span class="xs-ico">${ico}</span><span class="xs-lbl">${lbl}</span>
+      <b class="xs-val">${v > 0 ? "+" + v : v} XP</b>`;
+    srow.appendChild(d);
+  });
+  src.appendChild(srow);
+  el.appendChild(src);
+
+  /* ----- Les goals de carrière ----- */
+  const gc = document.createElement("div");
+  gc.className = "card xp-card";
+  gc.innerHTML = `<h3>🏅 Les ${XP_GOALS.length} goals de carrière — ${doneGoals} accompli${doneGoals > 1 ? "s" : ""}</h3>`;
+  const ggrid = document.createElement("div");
+  ggrid.className = "xp-goals";
+  const sorted = XP_GOALS.slice().sort((a, b) => {
+    const da = xp.goals[a.code] ? 0 : 1, db = xp.goals[b.code] ? 0 : 1;
+    return da - db || a.xp - b.xp;
+  });
+  sorted.forEach(g => {
+    const got = xp.goals[g.code];
+    const city = got ? xpTournamentCity(got.tid) : "";
+    const d = document.createElement("div");
+    d.className = "xp-goal" + (got ? " got" : "");
+    d.innerHTML = `<span class="xg-ico">${g.icon}</span>
+      <div class="xg-txt"><div class="xg-lbl">${g.label}</div>
+        <div class="xg-sub">${got ? `✅ ${got.year}${city ? " · " + city : ""}` : "à accomplir"}</div></div>
+      <span class="xg-xp">+${g.xp}</span>`;
+    ggrid.appendChild(d);
+  });
+  gc.appendChild(ggrid);
+  el.appendChild(gc);
+
+  /* ----- Le journal ----- */
+  const j = document.createElement("div");
+  j.className = "card xp-card";
+  j.innerHTML = `<h3>📜 Le journal de ta carrière</h3>`;
+  const log = (xp.log || []).slice(-80).reverse();
+  if (!log.length) {
+    j.insertAdjacentHTML("beforeend",
+      `<p class="xp-empty">Ton histoire s'écrit dès le premier match : chaque victoire vaut +${XP_WIN} XP,
+      chaque exploit son goal… Rendez-vous ici après chaque tournoi 🎾</p>`);
+  } else {
+    const jl = document.createElement("div");
+    jl.className = "xp-journal";
+    log.forEach(e => {
+      const lvl = e.t === "up" || e.t === "down";
+      const d = document.createElement("div");
+      d.className = "xp-line" + (lvl ? " lvl " + e.t : "");
+      d.innerHTML = `<span class="xl-xp ${e.xp > 0 ? "pos" : e.xp < 0 ? "neg" : "star"}">${
+        e.xp > 0 ? "+" + e.xp : e.xp < 0 ? String(e.xp) : "★"}</span>
+        <span class="xl-lbl">${e.label}</span>
+        <span class="xl-yr">${e.year || ""}</span>`;
+      jl.appendChild(d);
+    });
+    j.appendChild(jl);
+    if ((xp.log || []).length > 80)
+      j.insertAdjacentHTML("beforeend", `<p class="xp-empty">… et ${xp.log.length - 80} événements plus anciens.</p>`);
+  }
+  el.appendChild(j);
 }
