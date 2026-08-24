@@ -98,11 +98,11 @@ function showOnboarding(step) {
   box.innerHTML = `
     <div class="onboard-hero">
       <div class="big-logo">FUN<span class="logo-apos">'</span>IS</div>
-      <p>La saison ATP ${(typeof state !== "undefined" && state && state.year) || START_YEAR}… disputée par <strong>127 légendes</strong> de l'Histoire,
-      des mythes et de la fiction — et par <strong>toi</strong>, le 128<sup>e</sup> joueur.</p>
+      <p><strong>${MAX_SEASONS} saisons ATP</strong> — de ${START_YEAR} à ${START_YEAR + MAX_SEASONS - 1} — disputées par <strong>127 légendes</strong> de l'Histoire,
+      des mythes et de la fiction… et par <strong>toi</strong>, le 128<sup>e</sup> joueur.</p>
       <div class="oh-points">
         <span>🎾 <strong>Crée ton champion</strong> sur mesure, recrute les <strong>4 joueurs de ton club</strong> et joue leurs matchs à la main</span>
-        <span>🏆 4 Grands Chelems, 9 Masters 1000 et le Masters final — <strong>5 saisons</strong> pour décrocher la place de n°1 mondial</span>
+        <span>🏆 <strong>14 tournois par saison</strong> : 4 Grands Chelems, 9 Masters 1000 et le Masters final — objectif n°1 mondial</span>
         <span>🎰 Parie comme un pro sur <strong>FUN'BET</strong> : vainqueurs, combinés aux cotes multipliées, scores exacts, aces, tie-breaks…</span>
         <span>🏦 Gère ta banque en direct : prize money taxé à <strong>40 %</strong>, <strong>20 %</strong> pour le staff, <strong>500 000 €</strong> de frais par saison</span>
         <span>💉 Dope <strong>ton champion</strong> pour un coup de pouce… à 40 000 € la dose et 5 % de risque de suspension</span>
@@ -3179,6 +3179,44 @@ function xpTournamentCity(tid) {
   return rec ? CALENDAR[rec.index].city : "";
 }
 
+/* v30 : victoires de carrière — l'XP les compte pour ton champion */
+function xpWinsOf(pid) {
+  const cp = customPlayer();
+  if (cp && pid === cp.id && state.xp) return state.xp.wins || 0;
+  const s = playerStats(pid);
+  return s.wins;
+}
+
+/* 🃏 v30 — LA CARTE façon EA Sports FC : note, drapeau, classement, club et
+   les 6 attributs de jeu. Cliquable → la fiche complète du joueur.
+   Le fond s'illumine avec le niveau atteint (bronze → argent → or → « icône »). */
+function eaCardHTML(p, cc) {
+  const note = p.overall ? Math.round(p.overall) : Math.round(p.sk[bestSurface(p).key] * 10);
+  const tier = cc.idx >= 18 ? "icon" : cc.idx >= 12 ? "gold" : cc.idx >= 6 ? "silver" : "bronze";
+  const jeu = SKILLS.slice(4); // force, endurance, adresse, tactique, service, mental
+  const titles = (state.titles[p.id] || []).length;
+  return `
+    <button class="ea-card ea-${tier}" title="Voir la fiche de ${p.name}">
+      <span class="ea-shine"></span>
+      <span class="ea-top">
+        <span class="ea-note">
+          <span class="ea-note-v">${note}</span>
+          <span class="ea-note-p">${cc.label}</span>
+        </span>
+        <span class="ea-portrait">${flagHTML(p.flag)}</span>
+      </span>
+      <span class="ea-name">${p.name}</span>
+      <span class="ea-meta">
+        <span>${clubName()}</span>
+        <span>🏆 ${titles} titre${titles > 1 ? "s" : ""} · ${xpWinsOf(p.id)} v.</span>
+      </span>
+      <span class="ea-stats">
+        ${jeu.map(s => `<span class="ea-stat"><b>${Math.round(p.sk[s.key] * 10)}</b><i>${s.short}</i></span>`).join("")}
+      </span>
+      <span class="ea-cta">🪪 Voir ma fiche</span>
+    </button>`;
+}
+
 function renderCareerXP(el) {
   const cp = customPlayer();
   if (!cp || !state.xp) { navigate("season"); return; }
@@ -3193,21 +3231,27 @@ function renderCareerXP(el) {
   const hero = document.createElement("div");
   hero.className = "xp-hero";
   hero.innerHTML = `
-    <div class="xp-hat">${flagHTML(cp.flag)} ${cp.name} · ${clubName()}</div>
-    <div class="xp-big-label">classé</div>
-    <div class="xp-big">${cc.label}</div>
-    <div class="xp-sub">${cc.next
-      ? `Prochain palier : <strong>${cc.next}</strong> — encore <strong>${cc.nextAt - xp.total} XP</strong> à conquérir`
-      : "🏔️ −15 — tu as atteint le sommet absolu du tennis français !"}</div>
-    <div class="xp-bar"><span style="width:${pct}%"></span></div>
-    ${cc.next ? `<div class="xp-bar-lbl">${into} / ${span} XP vers ${cc.next}</div>` : ""}
-    <div class="xp-kpis">
-      <div class="xp-kpi"><b>${xp.total}</b><span>XP total</span></div>
-      <div class="xp-kpi"><b>${xp.wins || 0}</b><span>victoire${(xp.wins || 0) > 1 ? "s" : ""}</span></div>
-      <div class="xp-kpi"><b>${xp.winStreak || 0}</b><span>série en cours</span></div>
-      <div class="xp-kpi"><b>${doneGoals}/${XP_GOALS.length}</b><span>goals</span></div>
-    </div>`;
+    <div class="xp-hero-main">
+      <div class="xp-hat">${flagHTML(cp.flag)} ${cp.name} · ${clubName()}</div>
+      <div class="xp-big-label">classé</div>
+      <div class="xp-big">${cc.label}</div>
+      <div class="xp-sub">${cc.next
+        ? `Prochain palier : <strong>${cc.next}</strong> — encore <strong>${cc.nextAt - xp.total} XP</strong> à conquérir`
+        : "🏔️ −15 — tu as atteint le sommet absolu du tennis français !"}</div>
+      <div class="xp-bar"><span style="width:${pct}%"></span></div>
+      ${cc.next ? `<div class="xp-bar-lbl">${into} / ${span} XP vers ${cc.next}</div>` : ""}
+      <div class="xp-kpis">
+        <div class="xp-kpi"><b>${xp.total}</b><span>XP total</span></div>
+        <div class="xp-kpi"><b>${xp.wins || 0}</b><span>victoire${(xp.wins || 0) > 1 ? "s" : ""}</span></div>
+        <div class="xp-kpi"><b>${xp.winStreak || 0}</b><span>série en cours</span></div>
+        <div class="xp-kpi"><b>${doneGoals}/${XP_GOALS.length}</b><span>goals</span></div>
+      </div>
+    </div>
+    <div class="xp-hero-card">${eaCardHTML(cp, cc)}</div>`;
   el.appendChild(hero);
+  // v30 : la carte façon EA Sports ouvre la fiche complète du champion
+  const eaBtn = hero.querySelector(".ea-card");
+  if (eaBtn) eaBtn.addEventListener("click", () => openPlayerCard(cp.id));
 
   /* ----- L'échelle des 22 classements ----- */
   const lad = document.createElement("div");

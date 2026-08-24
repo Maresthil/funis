@@ -1371,7 +1371,11 @@ tr.top-cut td { border-bottom: 2.5px dashed var(--gold); }
   text-align: center;
   margin-bottom: 16px;
   box-shadow: 0 12px 40px rgba(0,0,0,.4);
+  /* v30 : le bloc classement à gauche, la carte EA à droite */
+  display: flex; align-items: center; justify-content: center; gap: 26px; flex-wrap: wrap;
 }
+.xp-hero-main { flex: 1 1 380px; min-width: 0; }
+.xp-hero-card { flex: 0 0 auto; }
 .xp-hat { color: #b9cdf1; font-size: 14px; font-weight: 700; }
 .xp-big-label {
   color: #ffd977; text-transform: uppercase; letter-spacing: 3px;
@@ -1540,3 +1544,112 @@ tr.top-cut td { border-bottom: 2.5px dashed var(--gold); }
 
 /* v29 : la fiche d'un match ouverte depuis une carte joueur s'empile AU-DESSUS */
 #modal-overlay.over-card { z-index: 500; }
+
+/* ============================================================
+   v30 — 🃏 LA CARTE façon EA Sports FC (hero de Ma carrière)
+   ============================================================ */
+.ea-card {
+  position: relative;
+  display: flex; flex-direction: column; align-items: center;
+  width: 216px; padding: 16px 14px 14px;
+  border-radius: 16px 16px 22px 22px;
+  border: 2px solid transparent;
+  font-family: inherit; cursor: pointer; overflow: hidden;
+  transition: transform .18s ease, box-shadow .18s ease;
+}
+.ea-card:hover { transform: translateY(-5px) scale(1.03); }
+.ea-card:active { transform: translateY(-1px) scale(1.01); }
+
+/* Les paliers : bronze → argent → or → icône */
+.ea-bronze {
+  background: linear-gradient(165deg, #7a4b25 0%, #b07a45 38%, #5e3a1d 100%);
+  border-color: #d3a06a; box-shadow: 0 10px 28px rgba(122,75,37,.5);
+}
+.ea-silver {
+  background: linear-gradient(165deg, #6b7683 0%, #cdd6e0 38%, #59626d 100%);
+  border-color: #eaf0f7; box-shadow: 0 10px 28px rgba(120,132,148,.5);
+}
+.ea-gold {
+  background: linear-gradient(165deg, #8a6410 0%, #f2cf6b 38%, #7a5509 100%);
+  border-color: #ffe9a8; box-shadow: 0 10px 30px rgba(212,167,44,.55);
+}
+.ea-icon {
+  background: linear-gradient(165deg, #2b2b2b 0%, #e8e2d2 30%, #b9a888 60%, #201f1d 100%);
+  border-color: #fff8e6; box-shadow: 0 12px 34px rgba(255,248,230,.35);
+}
+/* Le reflet diagonal caractéristique */
+.ea-shine {
+  position: absolute; inset: 0;
+  background: linear-gradient(115deg, transparent 38%, rgba(255,255,255,.30) 48%, transparent 58%);
+  pointer-events: none;
+}
+
+.ea-top { display: flex; align-items: center; gap: 8px; width: 100%; }
+.ea-note { display: flex; flex-direction: column; align-items: center; line-height: 1; }
+.ea-note-v {
+  font-family: "Archivo Black", "Arial Black", sans-serif;
+  font-size: 40px; color: #1b1405; text-shadow: 0 1px 0 rgba(255,255,255,.35);
+}
+.ea-note-p {
+  font-size: 15px; font-weight: 900; color: #1b1405;
+  border-top: 1px solid rgba(27,20,5,.45); margin-top: 4px; padding-top: 3px;
+  letter-spacing: .5px; white-space: nowrap;
+}
+.ea-portrait {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  font-size: 44px; filter: drop-shadow(0 3px 7px rgba(0,0,0,.45));
+}
+/* Le drapeau tient le rôle du portrait. aspect-ratio réserve la place même
+   avant le chargement du SVG (sinon la carte se referme sur elle-même). */
+.ea-portrait .flag-img {
+  height: 1em; width: auto; max-width: none; aspect-ratio: 3 / 2;
+  border-radius: 6px; vertical-align: middle;
+  background: rgba(255,255,255,.22);
+  box-shadow: 0 0 0 1px rgba(0,0,0,.3), 0 2px 6px rgba(0,0,0,.35);
+}
+
+.ea-name {
+  width: 100%; margin-top: 8px; padding: 4px 0 5px;
+  border-top: 1px solid rgba(27,20,5,.35);
+  font-family: "Archivo Black", "Arial Black", sans-serif;
+  font-size: 15px; line-height: 1.15; color: #1b1405;
+  text-transform: uppercase; letter-spacing: .3px;
+}
+.ea-meta {
+  display: flex; flex-direction: column; gap: 1px;
+  font-size: 10px; font-weight: 700; color: rgba(27,20,5,.75);
+  text-transform: uppercase; letter-spacing: .4px; margin-bottom: 7px;
+  white-space: nowrap;
+}
+.ea-icon .ea-name, .ea-icon .ea-note-v, .ea-icon .ea-note-p { color: #1a1a1a; }
+.ea-silver .ea-name, .ea-silver .ea-note-v, .ea-silver .ea-note-p { color: #1b2230; }
+.ea-silver .ea-meta { color: rgba(27,34,48,.75); }
+.ea-bronze .ea-name, .ea-bronze .ea-note-v, .ea-bronze .ea-note-p { color: #2b1708; }
+.ea-bronze .ea-meta { color: rgba(255,240,225,.85); }
+
+.ea-stats {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px 8px;
+  width: 100%; padding-top: 7px;
+  border-top: 1px solid rgba(27,20,5,.35);
+}
+.ea-stat { display: flex; flex-direction: column; align-items: center; line-height: 1.05; }
+.ea-stat b { font-size: 16px; font-weight: 900; color: #1b1405; }
+.ea-stat i { font-size: 9px; font-style: normal; font-weight: 700; color: rgba(27,20,5,.7); letter-spacing: .5px; }
+.ea-bronze .ea-stat b { color: #2b1708; }
+.ea-bronze .ea-stat i { color: rgba(255,240,225,.8); }
+.ea-silver .ea-stat b { color: #1b2230; }
+.ea-silver .ea-stat i { color: rgba(27,34,48,.7); }
+
+.ea-cta {
+  margin-top: 10px; padding: 5px 12px; border-radius: 999px;
+  background: rgba(16,19,50,.82); color: #ffe9a8;
+  font-size: 11px; font-weight: 800; letter-spacing: .3px;
+}
+.ea-card:hover .ea-cta { background: #101332; color: #fff; }
+
+@media (max-width: 620px) {
+  .xp-hero { gap: 18px; }
+  .ea-card { width: 200px; }
+  .ea-note-v { font-size: 34px; }
+  .ea-portrait { font-size: 40px; }
+}
